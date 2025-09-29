@@ -7,7 +7,7 @@ from typing import Optional, Tuple, Dict, Any
 
 from PIL import Image as PilImage
 from PySide6.QtCore import Qt, QSize, QPoint, Signal, QThread
-from PySide6.QtGui import QPixmap, QImage, QIcon, QAction
+from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QPainter, QFont, QPen, QColor
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QListWidget, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QLineEdit, QSpinBox, QSlider, QComboBox,
@@ -103,6 +103,8 @@ class DraggableOverlay(QLabel):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         self.setMouseTracking(True)
+        self.setStyleSheet("background: transparent")
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
         self._dragging = False
         self._last_pos = QPoint(0, 0)
         self._content_mode = 'text'  # 'text' or 'image'
@@ -125,21 +127,17 @@ class DraggableOverlay(QLabel):
         super().paintEvent(ev)
         painter = None
         try:
-            from PySide6.QtGui import QPainter, QFont, QPen, QColor
             painter = QPainter(self)
-            painter.setRenderHints(painter.Antialiasing | painter.SmoothPixmapTransform)
+            painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
             if self._content_mode == 'image' and self._pixmap:
                 painter.drawPixmap(0, 0, self._pixmap)
             elif self._content_mode == 'text':
-                if self._pixmap:
-                    painter.drawPixmap(0, 0, self._pixmap)
-                if self._text:
-                    font = QFont()
-                    font.setPointSize(20)
-                    painter.setFont(font)
-                    pen = QPen(QColor(255, 255, 255))
-                    painter.setPen(pen)
-                    painter.drawText(self.rect(), Qt.AlignLeft | Qt.AlignTop, self._text)
+                font = QFont(self.font())
+                font.setPointSize(20)
+                painter.setFont(font)
+                pen = QPen(QColor(255, 255, 255))
+                painter.setPen(pen)
+                painter.drawText(self.rect(), Qt.AlignCenter, self._text)
         finally:
             if painter:
                 painter.end()
@@ -437,48 +435,29 @@ class MainWindow(QMainWindow):
     # ---------------- preview / overlay ----------------
     def show_preview(self, pil_img):
         qpix = pil_to_qpixmap(pil_img)
-        # scale to label size while maintaining aspect
-        w = self.preview_label.width()
-        h = self.preview_label.height()
-        scaled = qpix.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.preview_label.setPixmap(scaled)
-        # adjust overlay size and position proportional to preview
-        pix_w, pix_h = scaled.width(), scaled.height()
+        self.preview_label.setPixmap(qpix)
+        self.preview_label.setScaledContents(True)
         self.overlay.setParent(self.preview_label)
-        self.overlay.setFixedSize(pix_w, pix_h)
+        self.overlay.setFixedSize(self.preview_label.size())
         self.overlay.move(0, 0)
         self.overlay.show()
 
     def update_preview(self):
         if not self.current_pil:
             return
-
-        # 根据水印类型生成预览
-        if self.text_input.text().strip():
-            img = apply_watermark(
-                self.current_pil.copy(),
-                self.text_input.text(),
-                self.opacity_slider.value(),
-                self.scale_slider.value() / 100.0,
-                self.rotation_slider.value(),
-                self.x_slider.value() / 100.0,
-                self.y_slider.value() / 100.0
+        ctx = self._gather_current_settings()
+        # apply logo first
+        if ctx.get('use_image_mark') and ctx.get('mark_img'):
+            scaled = pil_to_qpixmap(ctx['mark_img']).scaled(
+                self.overlay.width(),
+                self.overlay.height(),
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
             )
-        elif self.img_input.text():
-            img = apply_img_watermark(
-                self.current_pil.copy(),
-                self.img_input.text(),
-                self.opacity_slider.value(),
-                self.scale_slider.value() / 100.0,
-                self.rotation_slider.value(),
-                self.x_slider.value() / 100.0,
-                self.y_slider.value() / 100.0
-            )
-        else:
-            img = self.current_pil.copy()
+            self.overlay.set_image(scaled)
 
-        # 显示预览
-        self.show_preview(img)
+        if ctx.get('use_text_mark') and ctx.get('text'):
+            self.overlay.set_text(ctx['text'])
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         # derive positions relative to original image size (we use absolute pixels based on original)

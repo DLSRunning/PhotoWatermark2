@@ -1,3 +1,4 @@
+# watermark.py
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from io import BytesIO
 from typing import Tuple, Optional
