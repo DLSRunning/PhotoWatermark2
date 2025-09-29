@@ -7,7 +7,7 @@ from typing import Optional, Tuple, Dict, Any
 
 from PIL import Image as PilImage
 from PySide6.QtCore import Qt, QSize, QPoint, Signal, QThread
-from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QPainter, QFont, QPen, QColor
+from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QPainter, QFont, QPen, QColor, QPainterPath, QBrush
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QListWidget, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QLineEdit, QSpinBox, QSlider, QComboBox,
@@ -105,42 +105,95 @@ class DraggableOverlay(QLabel):
         self.setMouseTracking(True)
         self.setStyleSheet("background: transparent")
         self.setAttribute(Qt.WA_TranslucentBackground, True)
+
         self._dragging = False
         self._last_pos = QPoint(0, 0)
+
         self._content_mode = 'text'  # 'text' or 'image'
+
         self._pixmap = None
         self._text = ''
+        self._font = self.font()
+        self._color = QColor(255, 255, 255)
+        self._opacity = 1.0
+        self._stroke_width = 0
+        self._stroke_color = QColor(0, 0, 0)
+        self._rotation = 0.0
 
-    def set_text(self, text: str, qpixmap: Optional[QPixmap] = None):
+    def set_text(self, text: str, font: QFont = None, color: QColor = None,
+                 stroke_width: int = 0, stroke_color: QColor = None,
+                 rotation: float = 0.0, opacity: float = 1.0):
         self._content_mode = 'text'
         self._text = text
-        if qpixmap:
-            self._pixmap = qpixmap
+        if font:
+            self._font = font
+        if color:
+            self._color = color
+        if stroke_color:
+            self._stroke_color = stroke_color
+        self._stroke_width = stroke_width
+        self._rotation = rotation
+        self._opacity = opacity
         self.update()
 
-    def set_image(self, qpixmap: QPixmap):
+    def set_image(self, pixmap: QPixmap, opacity: float = 1.0):
         self._content_mode = 'image'
-        self._pixmap = qpixmap
+        self._pixmap = pixmap
+        self._opacity = opacity
         self.update()
 
     def paintEvent(self, ev):
         super().paintEvent(ev)
-        painter = None
-        try:
-            painter = QPainter(self)
-            painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
-            if self._content_mode == 'image' and self._pixmap:
-                painter.drawPixmap(0, 0, self._pixmap)
-            elif self._content_mode == 'text':
-                font = QFont(self.font())
-                font.setPointSize(20)
-                painter.setFont(font)
-                pen = QPen(QColor(255, 255, 255))
-                painter.setPen(pen)
-                painter.drawText(self.rect(), Qt.AlignCenter, self._text)
-        finally:
-            if painter:
-                painter.end()
+        if not (self._text or self._pixmap):
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
+        painter.setOpacity(self._opacity)
+
+        if self._content_mode == 'image' and self._pixmap:
+            painter.drawPixmap(0, 0, self._pixmap)
+
+        elif self._content_mode == 'text' and self._text:
+            painter.setFont(self._font)
+
+            metrics = painter.fontMetrics()
+            text_rect = metrics.boundingRect(self._text)
+            text_rect.moveCenter(self.rect().center())
+
+            painter.save()
+            center = text_rect.center()
+            painter.translate(center)
+            painter.rotate(self._rotation)
+            painter.translate(-center)
+
+            path = QPainterPath()
+            path.addText(text_rect.topLeft(), self._font, self._text)
+
+            # 描边
+            if self._stroke_width > 0:
+                pen = QPen(self._stroke_color)
+                pen.setWidth(self._stroke_width)
+                pen.setJoinStyle(Qt.RoundJoin)
+                painter.strokePath(path, pen)
+
+            # 填充文字
+            painter.fillPath(path, QBrush(self._color))
+
+            painter.restore()
+
+    def _draw_rotated_text(self, painter: QPainter, text: str):
+        rect = self.rect()
+        path = QPainterPath()
+        path.addText(rect.center() - QPoint(rect.width() // 2, -rect.height() // 2), self._font, text)
+
+        if self._stroke_width > 0:
+            pen = QPen(self._stroke_color)
+            pen.setWidth(self._stroke_width)
+            pen.setJoinStyle(Qt.RoundJoin)
+            painter.strokePath(path, pen)
+
+        painter.fillPath(path, QBrush(self._color))
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -257,7 +310,7 @@ class MainWindow(QMainWindow):
         # --- Text watermark ---
         text_group = QGroupBox('文本水印')
         text_layout = QFormLayout()
-        self.text_input = QLineEdit('示例水印')
+        self.text_input = QLineEdit('')
         self.font_combo = QFontComboBox()
         self.font_size = QSpinBox()
         self.font_size.setRange(6, 240)
@@ -445,19 +498,45 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         if not self.current_pil:
             return
-        ctx = self._gather_current_settings()
-        # apply logo first
-        if ctx.get('use_image_mark') and ctx.get('mark_img'):
-            scaled = pil_to_qpixmap(ctx['mark_img']).scaled(
-                self.overlay.width(),
-                self.overlay.height(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            self.overlay.set_image(scaled)
 
+        ctx = self._gather_current_settings()
+
+        # ---------------- 图片水印 ----------------
+        if ctx.get('use_image_mark') and self.mark_logo_pil:
+            if not hasattr(self, '_cached_logo_qpix') \
+                    or self._cached_logo_scale != self.logo_scale.value() \
+                    or self._cached_logo_rot != self.logo_rotation.value():
+                scale = self.logo_scale.value() / 100.0
+                new_size = (max(1, int(self.mark_logo_pil.width * scale)),
+                            max(1, int(self.mark_logo_pil.height * scale)))
+                pix = self.mark_logo_pil.resize(new_size, PilImage.LANCZOS)
+                qpix = pil_to_qpixmap(pix)
+                self._cached_logo_qpix = qpix
+                self._cached_logo_scale = self.logo_scale.value()
+                self._cached_logo_rot = self.logo_rotation.value()
+            self.overlay.set_image(self._cached_logo_qpix, opacity=ctx['mark_opacity'])
+        else:
+            self.overlay._pixmap = None
+
+        # ---------------- 文本水印 ----------------
         if ctx.get('use_text_mark') and ctx.get('text'):
-            self.overlay.set_text(ctx['text'])
+            font = QFont(self.font_combo.currentFont())
+            font.setPointSize(self.font_size.value())
+            color = QColor(*map(int, self._chosen_color))
+            stroke_color = QColor(*map(int, ctx.get('stroke_fill', (0, 0, 0))))
+            self.overlay.set_text(
+                text=ctx['text'],
+                font=font,
+                color=color,
+                stroke_width=ctx['stroke_width'],
+                stroke_color=stroke_color,
+                rotation=ctx['text_rotation'],
+                opacity=ctx['opacity']
+            )
+        else:
+            self.overlay._text = ''
+
+        self.overlay.update()
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         # derive positions relative to original image size (we use absolute pixels based on original)
