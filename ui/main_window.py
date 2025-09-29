@@ -20,8 +20,9 @@ import json
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
+from PIL import Image as PilImage
 from PySide6.QtCore import Qt, QSize, QPoint, Signal, QThread
-from PySide6.QtGui import QPixmap, QImage, QIcon, QFontDatabase, QAction
+from PySide6.QtGui import QPixmap, QImage, QIcon, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QListWidget, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QLineEdit, QSpinBox, QSlider, QComboBox,
@@ -29,11 +30,9 @@ from PySide6.QtWidgets import (
     QCheckBox, QGroupBox, QGridLayout, QFontComboBox, QFormLayout, QAbstractItemView
 )
 
-from PIL import Image as PilImage
-
+from core import templates as templates_mod
 from core.io_ops import load_image, save_image, resize_image, SUPPORTED_IN
 from core.watermark import apply_text_watermark, apply_image_watermark
-from core import templates as templates_mod
 
 
 def pil_to_qpixmap(pil_img) -> QPixmap:
@@ -220,24 +219,51 @@ class MainWindow(QMainWindow):
         self.export_worker: Optional[ExportWorker] = None
 
     def _init_ui(self):
-        # Left: file list
+        # Left: file list + import/export + 模板 + progress
+        left_widget = QWidget()
+        left_layout = QVBoxLayout(left_widget)
+
         self.file_list = QListWidget()
-        self.file_list.setMaximumWidth(320)
+        self.file_list.setMaximumWidth(280)
         self.file_list.setIconSize(QSize(96, 96))
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
-        # Center: preview area (stacked: preview QLabel + overlay)
+        self.import_btn = QPushButton('导入图片/文件夹')
+        self.export_btn = QPushButton('导出/批量处理')
+        self.progress = QProgressBar()
+        self.progress.setValue(0)
+
+        # --- Templates (放到左侧更直观) ---
+        tpl_group = QGroupBox('模板')
+        tpl_layout = QVBoxLayout()
+        self.tpl_list = QListWidget()
+        self.tpl_save_btn = QPushButton('保存为模板')
+        self.tpl_load_btn = QPushButton('加载模板')
+        self.tpl_del_btn = QPushButton('删除模板')
+        tpl_layout.addWidget(self.tpl_list)
+        tpl_layout.addWidget(self.tpl_save_btn)
+        tpl_layout.addWidget(self.tpl_load_btn)
+        tpl_layout.addWidget(self.tpl_del_btn)
+        tpl_group.setLayout(tpl_layout)
+
+        left_layout.addWidget(self.file_list, 1)
+        left_layout.addWidget(self.import_btn)
+        left_layout.addWidget(self.export_btn)
+        left_layout.addWidget(tpl_group, 1)
+        left_layout.addWidget(self.progress)
+
+        # Center: preview only
         preview_container = QWidget()
         preview_layout = QVBoxLayout(preview_container)
         preview_layout.setContentsMargins(0, 0, 0, 0)
+
         self.preview_label = QLabel('预览')
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setStyleSheet('background: #222; color: #eee;')
-        self.preview_label.setMinimumSize(640, 480)
+        self.preview_label.setMinimumSize(480, 320)
         self.preview_label.setScaledContents(False)
         preview_layout.addWidget(self.preview_label)
 
-        # overlay
         self.overlay = DraggableOverlay(self.preview_label)
         self.overlay.hide()
 
@@ -245,21 +271,24 @@ class MainWindow(QMainWindow):
         ctrl_widget = QWidget()
         ctrl_layout = QVBoxLayout(ctrl_widget)
 
-        # --- Import/Export buttons ---
-        self.import_btn = QPushButton('导入图片/文件夹')
-        self.export_btn = QPushButton('导出/批量处理')
-
-        # --- Text watermark controls ---
+        # --- Text watermark ---
         text_group = QGroupBox('文本水印')
         text_layout = QFormLayout()
         self.text_input = QLineEdit('示例水印')
         self.font_combo = QFontComboBox()
-        self.font_size = QSpinBox(); self.font_size.setRange(6, 240); self.font_size.setValue(36)
+        self.font_size = QSpinBox()
+        self.font_size.setRange(6, 240)
+        self.font_size.setValue(36)
         self.color_btn = QPushButton('颜色')
-        self.opacity_slider = QSlider(Qt.Horizontal); self.opacity_slider.setRange(0, 100); self.opacity_slider.setValue(60)
-        self.stroke_spin = QSpinBox(); self.stroke_spin.setRange(0, 10); self.stroke_spin.setValue(0)
-        self.rotation_text = QSpinBox(); self.rotation_text.setRange(0, 360); self.rotation_text.setValue(0)
-
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(60)
+        self.stroke_spin = QSpinBox()
+        self.stroke_spin.setRange(0, 10)
+        self.stroke_spin.setValue(0)
+        self.rotation_text = QSpinBox()
+        self.rotation_text.setRange(0, 360)
+        self.rotation_text.setValue(0)
         text_layout.addRow('文字', self.text_input)
         text_layout.addRow('字体', self.font_combo)
         text_layout.addRow('字号', self.font_size)
@@ -269,13 +298,19 @@ class MainWindow(QMainWindow):
         text_layout.addRow('旋转(°)', self.rotation_text)
         text_group.setLayout(text_layout)
 
-        # --- Image watermark controls ---
+        # --- Image watermark ---
         img_group = QGroupBox('图片水印 (Logo)')
         img_layout = QFormLayout()
         self.load_logo_btn = QPushButton('加载 Logo (PNG)')
-        self.logo_scale = QSlider(Qt.Horizontal); self.logo_scale.setRange(1, 400); self.logo_scale.setValue(100)
-        self.logo_opacity = QSlider(Qt.Horizontal); self.logo_opacity.setRange(0, 100); self.logo_opacity.setValue(60)
-        self.logo_rotation = QSpinBox(); self.logo_rotation.setRange(0, 360); self.logo_rotation.setValue(0)
+        self.logo_scale = QSlider(Qt.Horizontal)
+        self.logo_scale.setRange(1, 400)
+        self.logo_scale.setValue(100)
+        self.logo_opacity = QSlider(Qt.Horizontal)
+        self.logo_opacity.setRange(0, 100)
+        self.logo_opacity.setValue(60)
+        self.logo_rotation = QSpinBox()
+        self.logo_rotation.setRange(0, 360)
+        self.logo_rotation.setValue(0)
         img_layout.addRow(self.load_logo_btn)
         img_layout.addRow('缩放 (%)', self.logo_scale)
         img_layout.addRow('不透明度', self.logo_opacity)
@@ -295,28 +330,21 @@ class MainWindow(QMainWindow):
             pos_layout.addWidget(btn, i // 3, i % 3)
         pos_group.setLayout(pos_layout)
 
-        # --- Templates ---
-        tpl_group = QGroupBox('模板')
-        tpl_layout = QVBoxLayout()
-        self.tpl_list = QListWidget()
-        self.tpl_save_btn = QPushButton('保存为模板')
-        self.tpl_load_btn = QPushButton('加载模板')
-        self.tpl_del_btn = QPushButton('删除模板')
-        tpl_layout.addWidget(self.tpl_list)
-        tpl_layout.addWidget(self.tpl_save_btn)
-        tpl_layout.addWidget(self.tpl_load_btn)
-        tpl_layout.addWidget(self.tpl_del_btn)
-        tpl_group.setLayout(tpl_layout)
-
         # --- Export options ---
         export_group = QGroupBox('导出选项')
         export_layout = QFormLayout()
-        self.naming_combo = QComboBox(); self.naming_combo.addItems(['保留原名', '添加前缀', '添加后缀'])
+        self.naming_combo = QComboBox()
+        self.naming_combo.addItems(['保留原名', '添加前缀', '添加后缀'])
         self.prefix_input = QLineEdit('wm_')
         self.suffix_input = QLineEdit('_watermarked')
-        self.jpeg_quality = QSlider(Qt.Horizontal); self.jpeg_quality.setRange(10, 100); self.jpeg_quality.setValue(95)
-        self.resize_mode_combo = QComboBox(); self.resize_mode_combo.addItems(['不缩放', '按百分比', '按宽度', '按高度'])
-        self.resize_value_input = QSpinBox(); self.resize_value_input.setRange(1, 5000); self.resize_value_input.setValue(100)
+        self.jpeg_quality = QSlider(Qt.Horizontal)
+        self.jpeg_quality.setRange(10, 100)
+        self.jpeg_quality.setValue(95)
+        self.resize_mode_combo = QComboBox()
+        self.resize_mode_combo.addItems(['不缩放', '按百分比', '按宽度', '按高度'])
+        self.resize_value_input = QSpinBox()
+        self.resize_value_input.setRange(1, 5000)
+        self.resize_value_input.setValue(100)
         self.allow_export_to_src = QCheckBox('允许导出到源文件夹（默认禁止）')
         export_layout.addRow('命名规则', self.naming_combo)
         export_layout.addRow('前缀', self.prefix_input)
@@ -327,26 +355,21 @@ class MainWindow(QMainWindow):
         export_layout.addRow(self.allow_export_to_src)
         export_group.setLayout(export_layout)
 
-        # progress bar
-        self.progress = QProgressBar(); self.progress.setValue(0)
-
-        # assemble controls
-        ctrl_layout.addWidget(self.import_btn)
-        ctrl_layout.addWidget(self.export_btn)
+        # 组装右侧控制
         ctrl_layout.addWidget(text_group)
         ctrl_layout.addWidget(img_group)
         ctrl_layout.addWidget(pos_group)
-        ctrl_layout.addWidget(tpl_group)
         ctrl_layout.addWidget(export_group)
-        ctrl_layout.addWidget(self.progress)
         ctrl_layout.addStretch()
 
-        # main layout
-        central = QWidget()
-        main_layout = QHBoxLayout(central)
-        main_layout.addWidget(self.file_list)
+        # --- Main layout: 三栏 ---
+        main_layout = QHBoxLayout()
+        main_layout.addWidget(left_widget)
         main_layout.addWidget(preview_container, 1)
         main_layout.addWidget(ctrl_widget)
+
+        central = QWidget()
+        central.setLayout(main_layout)
         self.setCentralWidget(central)
 
         # context menu actions
