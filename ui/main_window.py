@@ -1,18 +1,3 @@
-# ui/main_window.py
-"""
-完整的 MainWindow 实现（基于 PySide6 + Pillow + core/* 模块）。
-功能亮点：
-- 文件/文件夹批量导入（支持拖放、文件选择器），显示缩略图与文件名列表
-- 实时预览（PIL -> QPixmap）
-- 文本水印（字体/大小/颜色/描边/透明度/旋转/位置九宫格/拖拽）
-- 图片水印（加载 PNG logo，缩放/透明度/旋转/拖拽）
-- 模板保存/加载/删除（使用 core.templates）
-- 批量导出（输出命名规则、JPEG quality、尺寸缩放、禁止导出到源文件夹）
-- 后台导出线程并显示进度
-
-依赖：PySide6, Pillow, core.io_ops, core.watermark, core.templates
-保存为 ui/main_window.py
-"""
 from __future__ import annotations
 
 import io
@@ -463,39 +448,36 @@ class MainWindow(QMainWindow):
         self.overlay.setFixedSize(pix_w, pix_h)
         self.overlay.move(0, 0)
         self.overlay.show()
-        self.update_preview()
 
     def update_preview(self):
         if not self.current_pil:
             return
-        img = self.current_pil.convert('RGBA')
-        ctx = self._gather_current_settings()
-        # apply logo first
-        if ctx.get('use_image_mark') and ctx.get('mark_img'):
-            img = apply_image_watermark(
-                img,
-                ctx['mark_img'],
-                position=tuple(ctx.get('mark_pos', (0, 0))),
-                scale=ctx.get('mark_scale', 1.0),
-                opacity=ctx.get('mark_opacity', 0.5),
-                rotation=ctx.get('mark_rotation', 0.0)
+
+        # 根据水印类型生成预览
+        if self.text_input.text().strip():
+            img = apply_watermark(
+                self.current_pil.copy(),
+                self.text_input.text(),
+                self.opacity_slider.value(),
+                self.scale_slider.value() / 100.0,
+                self.rotation_slider.value(),
+                self.x_slider.value() / 100.0,
+                self.y_slider.value() / 100.0
             )
-        # apply text
-        if ctx.get('use_text_mark'):
-            img = apply_text_watermark(
-                img,
-                ctx.get('text', ''),
-                ctx.get('font_path'),
-                font_size=ctx.get('font_size', 36),
-                color=tuple(ctx.get('color', (255, 255, 255))),
-                opacity=ctx.get('opacity', 0.5),
-                position=tuple(ctx.get('text_pos', (0, 0))),
-                anchor=ctx.get('anchor', 'lt'),
-                rotation=ctx.get('text_rotation', 0.0),
-                stroke_width=ctx.get('stroke_width', 0),
-                stroke_fill=tuple(ctx.get('stroke_fill', (0, 0, 0)))
+        elif self.img_input.text():
+            img = apply_img_watermark(
+                self.current_pil.copy(),
+                self.img_input.text(),
+                self.opacity_slider.value(),
+                self.scale_slider.value() / 100.0,
+                self.rotation_slider.value(),
+                self.x_slider.value() / 100.0,
+                self.y_slider.value() / 100.0
             )
-        # display
+        else:
+            img = self.current_pil.copy()
+
+        # 显示预览
         self.show_preview(img)
 
     def _gather_current_settings(self) -> Dict[str, Any]:
