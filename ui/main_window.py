@@ -136,10 +136,11 @@ class DraggableOverlay(QLabel):
         self._opacity = opacity
         self.update()
 
-    def set_image(self, pixmap: QPixmap, opacity: float = 1.0):
+    def set_image(self, pixmap: QPixmap, opacity: float = 1.0, rotation: float = 0.0):
         self._content_mode = 'image'
         self._pixmap = pixmap
         self._opacity = opacity
+        self._rotation = rotation
         self.update()
 
     def paintEvent(self, ev):
@@ -152,8 +153,15 @@ class DraggableOverlay(QLabel):
         painter.setOpacity(self._opacity)
 
         if self._content_mode == 'image' and self._pixmap:
-            painter.drawPixmap(0, 0, self._pixmap)
-
+            painter.save()
+            center = self.rect().center()
+            painter.translate(center)
+            painter.rotate(self._rotation)
+            painter.translate(-center)
+            target = self._pixmap.rect()
+            target.moveCenter(self.rect().center())
+            painter.drawPixmap(target, self._pixmap)
+            painter.restore()
         elif self._content_mode == 'text' and self._text:
             painter.setFont(self._font)
 
@@ -246,12 +254,6 @@ class MainWindow(QMainWindow):
         except Exception:
             self.templates = {}
         self._load_template_names()
-
-        # load last settings if exists
-        last = self.templates.get('__last__') if isinstance(self.templates, dict) else None
-        if last:
-            self._apply_settings_dict(last)
-
         self.export_worker: Optional[ExportWorker] = None
 
     def _init_ui(self):
@@ -514,7 +516,7 @@ class MainWindow(QMainWindow):
                 self._cached_logo_qpix = qpix
                 self._cached_logo_scale = self.logo_scale.value()
                 self._cached_logo_rot = self.logo_rotation.value()
-            self.overlay.set_image(self._cached_logo_qpix, opacity=ctx['mark_opacity'])
+            self.overlay.set_image(self._cached_logo_qpix, opacity=ctx['mark_opacity'], rotation=ctx['mark_rotation'])
         else:
             self.overlay._pixmap = None
 
