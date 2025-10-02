@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 
 from core import templates as templates_mod
 from core.io_ops import load_image, save_image, resize_image, SUPPORTED_IN
-from core.watermark import apply_text_watermark, apply_image_watermark
+from core.watermark import apply_text_watermark
 
 
 def pil_to_qpixmap(pil_img) -> QPixmap:
@@ -44,16 +44,7 @@ class ExportWorker(QThread):
                 if self._is_cancelled:
                     break
                 img = load_image(src).convert('RGBA')
-                # apply watermark according to ctx
-                if ctx.get('use_image_mark') and ctx.get('mark_img'):
-                    img = apply_image_watermark(
-                        img,
-                        ctx['mark_img'],
-                        position=tuple(ctx.get('mark_pos', (0, 0))),
-                        scale=ctx.get('mark_scale', 1.0),
-                        opacity=ctx.get('mark_opacity', 0.5),
-                        rotation=ctx.get('mark_rotation', 0.0)
-                    )
+                # 仅应用文本水印
                 if ctx.get('use_text_mark'):
                     img = apply_text_watermark(
                         img,
@@ -270,9 +261,6 @@ class MainWindow(QMainWindow):
         self.current_index: Optional[int] = None
         self.current_pil = None  # PIL Image for currently selected
 
-        self.mark_logo_pil = None
-        self.mark_logo_qpixmap = None
-
         self._chosen_color = (255, 255, 255)
 
         self._init_ui()
@@ -370,25 +358,6 @@ class MainWindow(QMainWindow):
         text_layout.addRow('旋转(°)', self.rotation_text)
         text_group.setLayout(text_layout)
 
-        # --- Image watermark ---
-        img_group = QGroupBox('图片水印 (Logo)')
-        img_layout = QFormLayout()
-        self.load_logo_btn = QPushButton('加载 Logo (PNG)')
-        self.logo_scale = QSlider(Qt.Horizontal)
-        self.logo_scale.setRange(1, 400)
-        self.logo_scale.setValue(100)
-        self.logo_opacity = QSlider(Qt.Horizontal)
-        self.logo_opacity.setRange(0, 100)
-        self.logo_opacity.setValue(60)
-        self.logo_rotation = QSpinBox()
-        self.logo_rotation.setRange(0, 360)
-        self.logo_rotation.setValue(0)
-        img_layout.addRow(self.load_logo_btn)
-        img_layout.addRow('缩放 (%)', self.logo_scale)
-        img_layout.addRow('不透明度', self.logo_opacity)
-        img_layout.addRow('旋转(°)', self.logo_rotation)
-        img_group.setLayout(img_layout)
-
         # --- Position presets ---
         pos_group = QGroupBox('位置/预设 (九宫格)')
         pos_layout = QGridLayout()
@@ -429,7 +398,6 @@ class MainWindow(QMainWindow):
 
         # 组装右侧控制
         ctrl_layout.addWidget(text_group)
-        ctrl_layout.addWidget(img_group)
         ctrl_layout.addWidget(pos_group)
         ctrl_layout.addWidget(export_group)
         ctrl_layout.addStretch()
@@ -465,12 +433,6 @@ class MainWindow(QMainWindow):
         self.opacity_slider.valueChanged.connect(lambda _: self.update_preview())
         self.stroke_spin.valueChanged.connect(lambda _: self.update_preview())
         self.rotation_text.valueChanged.connect(lambda _: self.update_preview())
-
-        # logo
-        self.load_logo_btn.clicked.connect(self.load_logo)
-        self.logo_scale.valueChanged.connect(lambda _: self.update_preview())
-        self.logo_opacity.valueChanged.connect(lambda _: self.update_preview())
-        self.logo_rotation.valueChanged.connect(lambda _: self.update_preview())
 
         # pos presets
         for btn in self.pos_buttons.values():
@@ -537,21 +499,11 @@ class MainWindow(QMainWindow):
 
         ctx = self._gather_current_settings()
 
-        # ---------------- 图片水印 ----------------
-        if ctx.get('use_image_mark') and self.mark_logo_pil:
-            # 构建缩放后的 PIL 图像
-            scaled_pil = self._build_scaled_logo_pil()
-            # 转为 QPixmap
-            scaled_qpix = pil_to_qpixmap(scaled_pil)
-            label_pos = self.image_to_label(*ctx.get('mark_pos', (0, 0)))
-            self.overlay.set_image(
-                scaled_qpix,
-                opacity=ctx['mark_opacity'],
-                rotation=ctx['mark_rotation'],
-                position=label_pos
-            )
+        # 优先使用 overlay 当前坐标
+        if self.overlay and self.overlay.isVisible():
+            label_pos = self.overlay._draw_pos
         else:
-            self.overlay._pixmap = None
+            label_pos = self.image_to_label(*ctx.get('text_pos', (0, 0)))
 
         # ---------------- 文本水印 ----------------
         if ctx.get('use_text_mark') and ctx.get('text'):
@@ -559,7 +511,6 @@ class MainWindow(QMainWindow):
             font.setPointSize(self.font_size.value())
             color = QColor(*map(int, self._chosen_color))
             stroke_color = QColor(*map(int, ctx.get('stroke_fill', (0, 0, 0))))
-            label_pos = self.image_to_label(*ctx.get('text_pos', (0, 0)))
             self.overlay.set_text(
                 text=ctx['text'],
                 font=font,
@@ -577,16 +528,10 @@ class MainWindow(QMainWindow):
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         use_text = bool(self.text_input.text())
-        use_image = self.mark_logo_pil is not None
-
-        tex_pos, mark_pos = (0, 0), (0, 0)
+        tex_pos = (0, 0)
         if self.current_pil:
             w, h = self.current_pil.size
             tex_pos = (w - 20, h - 20)
-            if self.mark_logo_pil:
-                scaled_w = max(1, int(self.mark_logo_pil.width * (self.logo_scale.value() / 100.0)))
-                scaled_h = max(1, int(self.mark_logo_pil.height * (self.logo_scale.value() / 100.0)))
-                mark_pos = (w - scaled_w - 20, h - scaled_h - 20)
 
         color = getattr(self, '_chosen_color', (255, 255, 255))
         resize_mode, resize_value = None, None
@@ -610,12 +555,6 @@ class MainWindow(QMainWindow):
             'text_pos': tex_pos,
             'anchor': 'rd',
             'text_rotation': float(self.rotation_text.value()),
-            'use_image_mark': use_image,
-            'mark_img': self._build_scaled_logo_pil(),
-            'mark_scale': self.logo_scale.value() / 100.0,
-            'mark_opacity': self.logo_opacity.value() / 100.0,
-            'mark_rotation': float(self.logo_rotation.value()),
-            'mark_pos': mark_pos,
             'resize_mode': resize_mode,
             'resize_value': resize_value,
             'jpeg_quality': self.jpeg_quality.value()
@@ -625,8 +564,6 @@ class MainWindow(QMainWindow):
         if self.overlay and self.overlay.isVisible():
             draw_pt = self.overlay._draw_pos
             ix, iy = self.label_to_image(draw_pt)
-            if use_image:
-                ctx['mark_pos'] = (ix, iy)
             if use_text:
                 ctx['text_pos'] = (ix, iy)
 
@@ -649,19 +586,6 @@ class MainWindow(QMainWindow):
             self._chosen_color = (col.red(), col.green(), col.blue())
             self.update_preview()
 
-    # ---------------- logo ----------------
-    def load_logo(self):
-        path, _ = QFileDialog.getOpenFileName(self, '选择 Logo（透明 PNG 建议）', filter='Images (*.png *.jpg *.jpeg *.bmp)')
-        if not path:
-            return
-        p = Path(path)
-        pil = load_image(p).convert('RGBA')
-        self.mark_logo_pil = pil
-        self.mark_logo_qpixmap = pil_to_qpixmap(pil)
-        # show on overlay (scaled to overlay if too big)
-        scaled = self.mark_logo_qpixmap.scaled(self.overlay.width(), self.overlay.height(), Qt.KeepAspectRatio, Qt.SmoothTransformation)
-        self.overlay.set_image(scaled)
-        self.update_preview()
 
     # ---------------- position buttons ----------------
     def on_pos_preset_clicked(self):

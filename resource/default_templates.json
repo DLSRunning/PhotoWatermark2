@@ -34,5 +34,32 @@
     "resize_mode": null,
     "resize_value": null,
     "jpeg_quality": 95
+  },
+  "测试2": {
+    "use_text_mark": true,
+    "text": "测试111",
+    "font_path": null,
+    "font_size": 81,
+    "color": [
+      1,
+      14,
+      255
+    ],
+    "opacity": 0.63,
+    "stroke_width": 0,
+    "stroke_fill": [
+      0,
+      0,
+      0
+    ],
+    "text_pos": [
+      2,
+      28
+    ],
+    "anchor": "rd",
+    "text_rotation": 0.0,
+    "resize_mode": null,
+    "resize_value": null,
+    "jpeg_quality": 95
   }
 }
