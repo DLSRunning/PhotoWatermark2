@@ -253,9 +253,9 @@ class DraggableOverlay(QLabel):
 
 class MainWindow(QMainWindow):
     # 每张图片单独水印设置
-    self.image_settings = {}  # type: Dict[Path, dict]
     def __init__(self):
         super().__init__()
+        self.image_settings: Dict[Path, dict] = {}
         self.setWindowTitle('WatermarkApp')
         self.resize(1200, 800)
 
@@ -264,6 +264,7 @@ class MainWindow(QMainWindow):
         self.current_pil = None  # PIL Image for currently selected
 
         self._chosen_color = (255, 255, 255)
+        self.mark_logo_pil = None  # 初始化 logo 水印为 None
 
         self._init_ui()
         self._connect_signals()
@@ -491,13 +492,22 @@ class MainWindow(QMainWindow):
         settings = self.image_settings.get(p)
         if settings:
             self._apply_settings_dict(settings)
+            self.update_preview()  # 应用设置后强制刷新预览
         self.show_preview(self.current_pil)
 
     # ---------------- preview / overlay ----------------
     def show_preview(self, pil_img):
         qpix = pil_to_qpixmap(pil_img)
+        # 保持原始比例拉伸显示
+        label_size = self.preview_label.size()
+        img_size = qpix.size()
+        if img_size.width() > 0 and img_size.height() > 0:
+            scale = min(label_size.width() / img_size.width(), label_size.height() / img_size.height())
+            new_w = int(img_size.width() * scale)
+            new_h = int(img_size.height() * scale)
+            qpix = qpix.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.preview_label.setPixmap(qpix)
-        self.preview_label.setScaledContents(True)
+        self.preview_label.setScaledContents(False)
 
         self.overlay.setParent(self.preview_label)
         self.overlay.setGeometry(0, 0, self.preview_label.width(), self.preview_label.height())
@@ -506,6 +516,10 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         if not self.current_pil:
             return
+           # 九宫格点击后立即保存新位置到 image_settings
+        if self.current_index is not None and self.current_index < len(self.images):
+            cur_path = self.images[self.current_index]
+            self.image_settings[cur_path] = self._gather_current_settings()
 
         ctx = self._gather_current_settings()
         # 实时保存当前图片设置
@@ -644,6 +658,10 @@ class MainWindow(QMainWindow):
         label_pt = self.image_to_label(target_x, target_y)
         self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
         self.update_preview()
+        # 九宫格点击后立即保存新位置到 image_settings
+        if self.current_index is not None and self.current_index < len(self.images):
+            cur_path = self.images[self.current_index]
+            self.image_settings[cur_path] = self._gather_current_settings()
 
     # ---------------- templates ----------------
     def _load_template_names(self):
@@ -744,8 +762,13 @@ class MainWindow(QMainWindow):
                 stroke_col = d.get('stroke_fill', (0, 0, 0))
             if 'text_rotation' in d:
                 self.rotation_text.setValue(int(float(d.get('text_rotation', 0))))
-            # 位置百分比转像素
-            if 'text_pos_percent' in d and self.current_pil:
+            # 优先处理像素位置
+            if 'text_pos' in d:
+                px, py = d['text_pos']
+                label_pt = self.image_to_label(px, py) if self.current_pil else QPoint(px, py)
+                self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
+            # 其次处理百分比位置
+            elif 'text_pos_percent' in d and self.current_pil:
                 w, h = self.current_pil.size
                 px = int(d['text_pos_percent'][0] * w)
                 py = int(d['text_pos_percent'][1] * h)

@@ -1,65 +1,29 @@
 {
   "测试": {
     "use_text_mark": true,
-    "text": "测试",
+    "text": "123",
     "font_path": null,
-    "font_size": 81,
+    "font_size": 60,
     "color": [
       255,
       0,
       0
     ],
     "opacity": 1.0,
-    "stroke_width": 10,
+    "stroke_width": 5,
     "stroke_fill": [
       0,
       0,
       0
     ],
-    "text_pos": [
-      860,
-      421
-    ],
     "anchor": "rd",
-    "text_rotation": 14.0,
-    "use_image_mark": false,
-    "mark_img": null,
-    "mark_scale": 1.0,
-    "mark_opacity": 0.6,
-    "mark_rotation": 0.0,
-    "mark_pos": [
-      0,
-      0
-    ],
+    "text_rotation": 50.0,
     "resize_mode": null,
     "resize_value": null,
-    "jpeg_quality": 95
-  },
-  "测试2": {
-    "use_text_mark": true,
-    "text": "测试111",
-    "font_path": null,
-    "font_size": 81,
-    "color": [
-      1,
-      14,
-      255
-    ],
-    "opacity": 0.63,
-    "stroke_width": 0,
-    "stroke_fill": [
-      0,
-      0,
-      0
-    ],
-    "text_pos": [
-      2,
-      28
-    ],
-    "anchor": "rd",
-    "text_rotation": 0.0,
-    "resize_mode": null,
-    "resize_value": null,
-    "jpeg_quality": 95
+    "jpeg_quality": 95,
+    "text_pos_percent": [
+      0.6127393513091052,
+      0.3780403057678944
+    ]
   }
 }
