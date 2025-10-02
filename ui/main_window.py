@@ -278,9 +278,13 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._connect_signals()
 
-        # load templates
+        # load templates from resource/default_templates.json
+        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
         try:
-            self.templates = templates_mod.load_templates()
+            if resource_path.exists():
+                self.templates = json.loads(resource_path.read_text(encoding='utf-8'))
+            else:
+                self.templates = {}
         except Exception:
             self.templates = {}
         self._load_template_names()
@@ -731,6 +735,9 @@ class MainWindow(QMainWindow):
         # 保存新模板
         templates[name] = self._gather_current_settings()
         resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
+        # 刷新左侧模板列表
+        self.templates = templates
+        self._load_template_names()
         QMessageBox.information(self, '保存', f'已保存模板到 {resource_path}')
 
     def load_selected_template(self):
@@ -739,7 +746,15 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '错误', '请先选择模板')
             return
         name = it.text()
-        data = self.templates.get(name)
+        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
+        try:
+            if resource_path.exists():
+                templates = json.loads(resource_path.read_text(encoding='utf-8'))
+            else:
+                templates = {}
+        except Exception:
+            templates = {}
+        data = templates.get(name)
         if not data:
             QMessageBox.warning(self, '错误', '模板数据不存在')
             return
@@ -751,16 +766,23 @@ class MainWindow(QMainWindow):
         if not it:
             return
         name = it.text()
-        templates = templates_mod.load_templates()
+        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
+        try:
+            if resource_path.exists():
+                templates = json.loads(resource_path.read_text(encoding='utf-8'))
+            else:
+                templates = {}
+        except Exception:
+            templates = {}
         if name in templates:
             del templates[name]
-            templates_mod.save_templates(templates)
+            resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
             self.templates = templates
             self._load_template_names()
             QMessageBox.information(self, '删除', f'已删除模板 {name}')
 
     def _apply_settings_dict(self, d: dict):
-        # apply a subset of settings safely
+        # 应用所有相关设置
         try:
             if 'text' in d:
                 self.text_input.setText(d.get('text', ''))
@@ -768,6 +790,19 @@ class MainWindow(QMainWindow):
                 self.font_size.setValue(int(d.get('font_size', 36)))
             if 'opacity' in d:
                 self.opacity_slider.setValue(int(float(d.get('opacity', 0.6)) * 100))
+            if 'color' in d:
+                col = d.get('color', (255, 255, 255))
+                self._chosen_color = tuple(col)
+            if 'stroke_width' in d:
+                self.stroke_spin.setValue(int(d.get('stroke_width', 0)))
+            if 'stroke_fill' in d:
+                stroke_col = d.get('stroke_fill', (0, 0, 0))
+            if 'text_rotation' in d:
+                self.rotation_text.setValue(int(float(d.get('text_rotation', 0))))
+            # 位置
+            if 'text_pos' in d and self.current_pil:
+                label_pt = self.image_to_label(*d['text_pos'])
+                self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
         except Exception:
             pass
 
