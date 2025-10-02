@@ -32,8 +32,10 @@ def apply_text_watermark(
         if font_path:
             font = ImageFont.truetype(font_path, font_size)
         else:
-            font = ImageFont.load_default()
+            # 使用常见系统字体（如 Arial），并应用自定义字号
+            font = ImageFont.truetype("arial.ttf", font_size)
     except Exception:
+        # 兜底：依然尝试默认字体，但字号不可控
         font = ImageFont.load_default()
 
     # 计算 color + alpha
@@ -41,6 +43,7 @@ def apply_text_watermark(
     fill = (color[0], color[1], color[2], alpha)
 
     # 在独立层上绘制文字
+    # 位置参数已由 UI label_to_image 映射为原图坐标，字号直接用 font_size
     draw.text(position, text, font=font, fill=fill, anchor=anchor, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
     if rotation and rotation % 360 != 0:

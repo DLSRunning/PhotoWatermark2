@@ -46,34 +46,27 @@ class ExportWorker(QThread):
                 img = load_image(src).convert('RGBA')
                 # 仅应用文本水印
                 if ctx.get('use_text_mark'):
+                    # 直接用像素字号，确保与预览一致
+                    pil_font_size = int(ctx.get('font_size', 36))
+                    # 旋转方向修正：PIL逆时针，Qt顺时针
+                    pil_rotation = -float(ctx.get('text_rotation', 0.0))
                     img = apply_text_watermark(
                         img,
                         ctx.get('text', ''),
                         ctx.get('font_path'),
-                        font_size=ctx.get('font_size', 36),
+                        font_size=pil_font_size,
                         color=tuple(ctx.get('color', (255, 255, 255))),
                         opacity=ctx.get('opacity', 0.5),
                         position=tuple(ctx.get('text_pos', (0, 0))),
                         anchor=ctx.get('anchor', 'lt'),
-                        rotation=ctx.get('text_rotation', 0.0),
+                        rotation=pil_rotation,
                         stroke_width=ctx.get('stroke_width', 0),
                         stroke_fill=tuple(ctx.get('stroke_fill', (0, 0, 0)))
                     )
 
-                # resize if requested
-                if ctx.get('resize_mode') and ctx.get('resize_value'):
-                    mode = ctx['resize_mode']
-                    val = ctx['resize_value']
-                    if mode == 'percent':
-                        img = resize_image(img, percent=val)
-                    elif mode == 'width':
-                        img = resize_image(img, width=int(val))
-                    elif mode == 'height':
-                        img = resize_image(img, height=int(val))
-
-                # save
+                # 直接保存原始尺寸和默认质量
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                save_image(img, dst, quality=ctx.get('jpeg_quality', 95))
+                save_image(img, dst)
 
                 self.progress.emit(int(i / total * 100))
         except Exception as e:
@@ -381,21 +374,10 @@ class MainWindow(QMainWindow):
         self.naming_combo.addItems(['保留原名', '添加前缀', '添加后缀'])
         self.prefix_input = QLineEdit('wm_')
         self.suffix_input = QLineEdit('_watermarked')
-        self.jpeg_quality = QSlider(Qt.Horizontal)
-        self.jpeg_quality.setRange(10, 100)
-        self.jpeg_quality.setValue(95)
-        self.resize_mode_combo = QComboBox()
-        self.resize_mode_combo.addItems(['不缩放', '按百分比', '按宽度', '按高度'])
-        self.resize_value_input = QSpinBox()
-        self.resize_value_input.setRange(1, 5000)
-        self.resize_value_input.setValue(100)
         self.allow_export_to_src = QCheckBox('允许导出到源文件夹（默认禁止）')
         export_layout.addRow('命名规则', self.naming_combo)
         export_layout.addRow('前缀', self.prefix_input)
         export_layout.addRow('后缀', self.suffix_input)
-        export_layout.addRow('JPEG 质量', self.jpeg_quality)
-        export_layout.addRow('缩放模式', self.resize_mode_combo)
-        export_layout.addRow('缩放值', self.resize_value_input)
         export_layout.addRow(self.allow_export_to_src)
         export_group.setLayout(export_layout)
 
@@ -516,27 +498,22 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         if not self.current_pil:
             return
-           # 九宫格点击后立即保存新位置到 image_settings
-        if self.current_index is not None and self.current_index < len(self.images):
-            cur_path = self.images[self.current_index]
-            self.image_settings[cur_path] = self._gather_current_settings()
-
+        # 获取当前设置（始终用原始图片坐标）
         ctx = self._gather_current_settings()
-        # 实时保存当前图片设置
+        # 保存当前图片设置
         if self.current_index is not None and self.current_index < len(self.images):
             cur_path = self.images[self.current_index]
             self.image_settings[cur_path] = ctx.copy()
 
-        # 优先使用 overlay 当前坐标
-        if self.overlay and self.overlay.isVisible():
-            label_pos = self.overlay._draw_pos
-        else:
-            label_pos = self.image_to_label(*ctx.get('text_pos', (0, 0)))
+        # 预览时将原始图片坐标映射到label坐标
+        img_pos = ctx.get('text_pos', (0, 0))
+        label_pos = self.image_to_label(*img_pos)
 
         # ---------------- 文本水印 ----------------
         if ctx.get('use_text_mark') and ctx.get('text'):
+            # PIL字号与Qt字号换算：PIL字号约等于Qt字号*96/72（DPI相关），但一般直接用Qt字号即可
             font = QFont(self.font_combo.currentFont())
-            font.setPointSize(self.font_size.value())
+            font.setPixelSize(self.font_size.value())
             color = QColor(*map(int, self._chosen_color))
             stroke_color = QColor(*map(int, ctx.get('stroke_fill', (0, 0, 0))))
             self.overlay.set_text(
@@ -556,20 +533,19 @@ class MainWindow(QMainWindow):
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         use_text = bool(self.text_input.text())
+        # 默认水印位置为右下角
         tex_pos = (0, 0)
         if self.current_pil:
             w, h = self.current_pil.size
             tex_pos = (w - 20, h - 20)
 
         color = getattr(self, '_chosen_color', (255, 255, 255))
-        resize_mode, resize_value = None, None
-        mode_text = self.resize_mode_combo.currentText()
-        if mode_text == '按百分比':
-            resize_mode, resize_value = 'percent', self.resize_value_input.value() / 100.0
-        elif mode_text == '按宽度':
-            resize_mode, resize_value = 'width', self.resize_value_input.value()
-        elif mode_text == '按高度':
-            resize_mode, resize_value = 'height', self.resize_value_input.value()
+        # 如果 overlay 已经移动过，覆盖位置（始终保存为原始图片坐标）
+        if self.overlay and self.overlay.isVisible():
+            draw_pt = self.overlay._draw_pos
+            ix, iy = self.label_to_image(draw_pt)
+            if use_text:
+                tex_pos = (ix, iy)
 
         ctx = {
             'use_text_mark': use_text,
@@ -582,19 +558,8 @@ class MainWindow(QMainWindow):
             'stroke_fill': (0, 0, 0),
             'text_pos': tex_pos,
             'anchor': 'rd',
-            'text_rotation': float(self.rotation_text.value()),
-            'resize_mode': resize_mode,
-            'resize_value': resize_value,
-            'jpeg_quality': self.jpeg_quality.value()
+            'text_rotation': float(self.rotation_text.value())
         }
-
-        # 如果 overlay 已经移动过，覆盖位置
-        if self.overlay and self.overlay.isVisible():
-            draw_pt = self.overlay._draw_pos
-            ix, iy = self.label_to_image(draw_pt)
-            if use_text:
-                ctx['text_pos'] = (ix, iy)
-
         return ctx
 
     def _build_scaled_logo_pil(self):
@@ -787,15 +752,13 @@ class MainWindow(QMainWindow):
             return
         out_dir = Path(out_dir)
         if not self.allow_export_to_src.isChecked():
-            # check none of images have same parent
             for p in self.images:
                 if p.parent == out_dir:
                     QMessageBox.warning(self, '错误', '输出文件夹不能是源图片所在的文件夹（可在导出选项允许）')
                     return
-        # build tasks
+        # build tasks，每张图片用独立设置
         tasks = []
-        ctx = self._gather_current_settings()
-        for p in self.images:
+        for idx, p in enumerate(self.images):
             # compute name
             if self.naming_combo.currentText() == '保留原名':
                 name = p.name
@@ -804,13 +767,20 @@ class MainWindow(QMainWindow):
             else:
                 name = p.stem + self.suffix_input.text() + p.suffix
             dst = out_dir / name
+            ctx = self.image_settings.get(p)
+            if not ctx:
+                # fallback: 当前设置
+                ctx = self._gather_current_settings()
             tasks.append((p, dst, ctx.copy()))
         # start worker
         self.export_worker = ExportWorker(tasks)
         self.export_worker.progress.connect(lambda v: self.progress.setValue(v))
         self.export_worker.error.connect(lambda e: QMessageBox.critical(self, '导出错误', e))
-        self.export_worker.finished.connect(lambda: QMessageBox.information(self, '完成', '导出完成'))
+        self.export_worker.finished.connect(self._on_export_finished)
         self.export_worker.start()
+
+    def _on_export_finished(self):
+        QMessageBox.information(self, '完成', '导出完成')
 
     # ---------------- overlay moved ----------------
     def on_overlay_moved(self, pos: QPoint):
