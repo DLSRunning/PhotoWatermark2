@@ -252,6 +252,8 @@ class DraggableOverlay(QLabel):
 
 
 class MainWindow(QMainWindow):
+    # 每张图片单独水印设置
+    self.image_settings = {}  # type: Dict[Path, dict]
     def __init__(self):
         super().__init__()
         self.setWindowTitle('WatermarkApp')
@@ -478,9 +480,17 @@ class MainWindow(QMainWindow):
         idx = self.file_list.currentRow()
         if idx < 0 or idx >= len(self.images):
             return
+        # 切换前保存当前图片设置
+        if self.current_index is not None and self.current_index < len(self.images):
+            cur_path = self.images[self.current_index]
+            self.image_settings[cur_path] = self._gather_current_settings()
         self.current_index = idx
         p = self.images[idx]
         self.current_pil = load_image(p)
+        # 加载该图片的设置
+        settings = self.image_settings.get(p)
+        if settings:
+            self._apply_settings_dict(settings)
         self.show_preview(self.current_pil)
 
     # ---------------- preview / overlay ----------------
@@ -498,6 +508,10 @@ class MainWindow(QMainWindow):
             return
 
         ctx = self._gather_current_settings()
+        # 实时保存当前图片设置
+        if self.current_index is not None and self.current_index < len(self.images):
+            cur_path = self.images[self.current_index]
+            self.image_settings[cur_path] = ctx.copy()
 
         # 优先使用 overlay 当前坐标
         if self.overlay and self.overlay.isVisible():
@@ -656,8 +670,15 @@ class MainWindow(QMainWindow):
                 templates = {}
         except Exception:
             templates = {}
-        # 保存新模板
-        templates[name] = self._gather_current_settings()
+        # 保存新模板，位置用百分比
+        ctx = self._gather_current_settings()
+        # 位置百分比化
+        if self.current_pil and 'text_pos' in ctx:
+            w, h = self.current_pil.size
+            x, y = ctx['text_pos']
+            ctx['text_pos_percent'] = (x / w if w else 0, y / h if h else 0)
+            ctx.pop('text_pos', None)
+        templates[name] = ctx
         resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
         # 刷新左侧模板列表
         self.templates = templates
@@ -723,9 +744,12 @@ class MainWindow(QMainWindow):
                 stroke_col = d.get('stroke_fill', (0, 0, 0))
             if 'text_rotation' in d:
                 self.rotation_text.setValue(int(float(d.get('text_rotation', 0))))
-            # 位置
-            if 'text_pos' in d and self.current_pil:
-                label_pt = self.image_to_label(*d['text_pos'])
+            # 位置百分比转像素
+            if 'text_pos_percent' in d and self.current_pil:
+                w, h = self.current_pil.size
+                px = int(d['text_pos_percent'][0] * w)
+                py = int(d['text_pos_percent'][1] * h)
+                label_pt = self.image_to_label(px, py)
                 self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
         except Exception:
             pass
