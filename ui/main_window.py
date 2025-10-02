@@ -535,12 +535,17 @@ class MainWindow(QMainWindow):
 
         # ---------------- 图片水印 ----------------
         if ctx.get('use_image_mark') and self.mark_logo_pil:
-            # build cached pixmap (你已有逻辑)...
+            # 构建缩放后的 PIL 图像
+            scaled_pil = self._build_scaled_logo_pil()
+            # 转为 QPixmap
+            scaled_qpix = pil_to_qpixmap(scaled_pil)
             label_pos = self.image_to_label(*ctx.get('mark_pos', (0, 0)))
-            self.overlay.set_image(self._cached_logo_qpix,
-                                   opacity=ctx['mark_opacity'],
-                                   rotation=ctx['mark_rotation'],
-                                   position=label_pos)
+            self.overlay.set_image(
+                scaled_qpix,
+                opacity=ctx['mark_opacity'],
+                rotation=ctx['mark_rotation'],
+                position=label_pos
+            )
         else:
             self.overlay._pixmap = None
 
@@ -707,12 +712,26 @@ class MainWindow(QMainWindow):
             self.tpl_list.addItem(k)
 
     def save_template(self):
-        name, ok = QFileDialog.getSaveFileName(self, '保存模板为 JSON', str(Path.home() / 'wm_template.json'), 'JSON Files (*.json)')
-        if not name:
+        # 直接保存到 resource/default_templates.json
+        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
+        # 获取当前模板名
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, '模板名称', '请输入模板名称:')
+        if not ok or not name.strip():
             return
-        data = self._gather_current_settings()
-        Path(name).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
-        QMessageBox.information(self, '保存', f'已保存模板到 {name}')
+        name = name.strip()
+        # 读取原有模板
+        try:
+            if resource_path.exists():
+                templates = json.loads(resource_path.read_text(encoding='utf-8'))
+            else:
+                templates = {}
+        except Exception:
+            templates = {}
+        # 保存新模板
+        templates[name] = self._gather_current_settings()
+        resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
+        QMessageBox.information(self, '保存', f'已保存模板到 {resource_path}')
 
     def load_selected_template(self):
         it = self.tpl_list.currentItem()
