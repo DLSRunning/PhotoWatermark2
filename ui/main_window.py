@@ -46,8 +46,11 @@ class ExportWorker(QThread):
                 img = load_image(src).convert('RGBA')
                 # 仅应用文本水印
                 if ctx.get('use_text_mark'):
-                    # 直接用像素字号，确保与预览一致
-                    pil_font_size = int(ctx.get('font_size', 36))
+                    # Qt像素字号 -> PIL point字号
+                    qt_font_size = int(ctx.get('font_size', 36))
+                    dpi = img.info.get("dpi", (96, 96))[0]  # 默认 96
+                    pil_font_size = int(qt_font_size * 72 / dpi)  # 换算后和预览接近
+
                     # 旋转方向修正：PIL逆时针，Qt顺时针
                     pil_rotation = -float(ctx.get('text_rotation', 0.0))
                     img = apply_text_watermark(

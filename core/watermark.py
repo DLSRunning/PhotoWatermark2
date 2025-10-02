@@ -29,11 +29,12 @@ def apply_text_watermark(
 
     # 尝试加载字体
     try:
+        pil_font_size = int(font_size * 72 / 96)
+
         if font_path:
-            font = ImageFont.truetype(font_path, font_size)
+            font = ImageFont.truetype(font_path, pil_font_size)
         else:
-            # 使用常见系统字体（如 Arial），并应用自定义字号
-            font = ImageFont.truetype("arial.ttf", font_size)
+            font = ImageFont.truetype("arial.ttf", pil_font_size)
     except Exception:
         # 兜底：依然尝试默认字体，但字号不可控
         font = ImageFont.load_default()
