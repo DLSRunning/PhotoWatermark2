@@ -28,7 +28,7 @@ def apply_text_watermark(
 
     # 尝试加载字体
     try:
-        pil_font_size = int(font_size * 72 / 96)
+        pil_font_size = int(font_size * 72 / 96 * 4)
 
         if font_path:
             font = ImageFont.truetype(font_path, pil_font_size)

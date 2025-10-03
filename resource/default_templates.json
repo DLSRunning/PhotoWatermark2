@@ -1,1 +1,26 @@
-{}
+{
+  "测试": {
+    "use_text_mark": true,
+    "text": "987789",
+    "font_path": null,
+    "font_size": 36,
+    "color": [
+      255,
+      0,
+      0
+    ],
+    "opacity": 1.0,
+    "stroke_width": 5,
+    "stroke_fill": [
+      0,
+      0,
+      0
+    ],
+    "text_pos_percent": [
+      0.40375586854460094,
+      0.43454038997214484
+    ],
+    "anchor": "rd",
+    "text_rotation": 90.0
+  }
+}

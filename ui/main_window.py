@@ -48,10 +48,11 @@ class ExportWorker(QThread):
                 if ctx.get('use_text_mark'):
                     pil_font_size = int(ctx.get('font_size', 36))
                     
-                    preview_scale = ctx.get('preview_scale', 0.25)
-                    pos_x, pos_y = ctx.get('text_pos', (0, 0))
-                    pos_x = int(pos_x / preview_scale)
-                    pos_y = int(pos_y / preview_scale)
+                    # 取百分比坐标并转换为实际像素坐标
+                    percent_pos = ctx.get('text_pos_percent', (0.0, 0.0))
+                    w, h = img.size
+                    pos_x = int(percent_pos[0] * w)
+                    pos_y = int(percent_pos[1] * h)
 
                     opacity = ctx.get('opacity', 60)
                     if opacity > 1:
@@ -471,20 +472,15 @@ class MainWindow(QMainWindow):
     def update_preview(self):
         if not self.current_pil:
             return
-        # 获取当前设置（始终用原始图片坐标）
         ctx = self._gather_current_settings()
-        # 保存当前图片设置
         if self.current_index is not None and self.current_index < len(self.images):
             cur_path = self.images[self.current_index]
             self.image_settings[cur_path] = ctx.copy()
 
-        # 预览时将原始图片坐标映射到label坐标
-        img_pos = ctx.get('text_pos', (0, 0))
-        label_pos = self.image_to_label(*img_pos)
+        percent_pos = ctx.get('text_pos_percent', (0.0, 0.0))
+        label_pos = self.image_to_label_percent(*percent_pos)
 
-        # ---------------- 文本水印 ----------------
         if ctx.get('use_text_mark') and ctx.get('text'):
-            # PIL字号与Qt字号换算：PIL字号约等于Qt字号*96/72（DPI相关），但一般直接用Qt字号即可
             font = QFont(self.font_combo.currentFont())
             font.setPixelSize(self.font_size.value())
             color = QColor(*map(int, self._chosen_color))
@@ -506,19 +502,13 @@ class MainWindow(QMainWindow):
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         use_text = bool(self.text_input.text())
-        tex_pos = (0, 0)
-        if self.current_pil:
-            w, h = self.current_pil.size
-            tex_pos = (w, h)
-
-        color = getattr(self, '_chosen_color', (255, 255, 255))
-        # 如果 overlay 已经移动过，覆盖位置（始终保存为原始图片坐标）
+        percent_pos = (0.0, 0.0)
         if self.overlay and self.overlay.isVisible():
             draw_pt = self.overlay._draw_pos
-            ix, iy = self.label_to_image(draw_pt)
-            if use_text:
-                tex_pos = (ix, iy)
+            px, py = self.label_to_percent(draw_pt)
+            percent_pos = (px, py)
 
+        color = getattr(self, '_chosen_color', (255, 255, 255))
         ctx = {
             'use_text_mark': use_text,
             'text': self.text_input.text(),
@@ -528,7 +518,7 @@ class MainWindow(QMainWindow):
             'opacity': self.opacity_slider.value() / 100.0,
             'stroke_width': self.stroke_spin.value(),
             'stroke_fill': (0, 0, 0),
-            'text_pos': tex_pos,
+            'text_pos_percent': percent_pos,
             'anchor': 'rd',
             'text_rotation': float(self.rotation_text.value())
         }
@@ -545,41 +535,39 @@ class MainWindow(QMainWindow):
     # ---------------- position buttons ----------------
     def on_pos_preset_clicked(self):
         btn = self.sender()
-        coords = btn.property('pos_coord')
         if not self.current_pil:
             return
-        w, h = self.current_pil.size
-        # 获取水印尺寸
-
-        if self.text_input.text():
-            font = QFont(self.font_combo.currentFont())
-            font.setPointSize(self.font_size.value())
-            fm = QFontMetrics(font)
-            rect = fm.boundingRect(self.text_input.text())
-            mw, mh = rect.width() / 0.25, rect.height() / 0.25
+        # 九宫格百分比坐标
+        # 九宫格中心定位（以水印中心为锚点）
+        # 计算水印在label上的宽高
+        font = QFont(self.font_combo.currentFont())
+        font.setPixelSize(self.font_size.value())
+        fm = QFontMetrics(font)
+        text = self.text_input.text()
+        if text:
+            rect = fm.boundingRect(text)
+            wm_w = rect.width()
+            wm_h = rect.height()
         else:
-            mw, mh = 100, 30
-
-        # 九宫格视觉中心坐标
-        pos_map = {
+            wm_w, wm_h = 100, 30
+        lw, lh = self.preview_label.width(), self.preview_label.height()
+        # 百分比坐标为中心点
+        pos_percent_map = {
             'LT': (0, 0),
-            'CT': (w // 2 - mw // 2, 0),
-            'RT': (w - mw, 0),
-            'LC': (0, h // 2 - mh // 2),
-            'CC': (w // 2 - mw // 2, h // 2 - mh // 2),
-            'RC': (w - mw, h // 2 - mh // 2),
-            'LB': (0, h - mh),
-            'CB': (w // 2 - mw // 2, h - mh),
-            'RB': (w - mw, h - mh)
+            'CT': (0.5 - wm_w/2/lw, 0),
+            'RT': (1.0-wm_w/lw, 0),
+            'LC': (0, 0.5 - wm_h/2/lh),
+            'CC': (0.5 - wm_w/2/lw, 0.5 - wm_h/2/lh),
+            'RC': (1.0-wm_w/lw, 0.5 - wm_h/2/lh),
+            'LB': (0, 1.0-wm_h/lh),
+            'CB': (0.5 - wm_w/2/lw, 1.0-wm_h/lh),
+            'RB': (1.0-wm_w/lw, 1.0-wm_h/lh)
         }
         btn_name = btn.text()
-        target_x, target_y = pos_map.get(btn_name, (0, 0))
-
-        # 映射到 label 坐标并设置 overlay
-        label_pt = self.image_to_label(target_x, target_y)
+        px, py = pos_percent_map.get(btn_name, (0.5, 0.5))
+        label_pt = self.image_to_label_percent(px, py)
         self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
         self.update_preview()
-        # 九宫格点击后立即保存新位置到 image_settings
         if self.current_index is not None and self.current_index < len(self.images):
             cur_path = self.images[self.current_index]
             self.image_settings[cur_path] = self._gather_current_settings()
@@ -666,7 +654,6 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, '删除', f'已删除模板 {name}')
 
     def _apply_settings_dict(self, d: dict):
-        # 应用所有相关设置
         try:
             if 'text' in d:
                 self.text_input.setText(d.get('text', ''))
@@ -683,17 +670,9 @@ class MainWindow(QMainWindow):
                 stroke_col = d.get('stroke_fill', (0, 0, 0))
             if 'text_rotation' in d:
                 self.rotation_text.setValue(int(float(d.get('text_rotation', 0))))
-            # 优先处理像素位置
-            if 'text_pos' in d:
-                px, py = d['text_pos']
-                label_pt = self.image_to_label(px, py) if self.current_pil else QPoint(px, py)
-                self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
-            # 其次处理百分比位置
-            elif 'text_pos_percent' in d and self.current_pil:
-                w, h = self.current_pil.size
-                px = int(d['text_pos_percent'][0] * w)
-                py = int(d['text_pos_percent'][1] * h)
-                label_pt = self.image_to_label(px, py)
+            if 'text_pos_percent' in d:
+                px, py = d['text_pos_percent']
+                label_pt = self.image_to_label_percent(px, py)
                 self.overlay.set_draw_pos(label_pt.x(), label_pt.y())
         except Exception:
             pass
@@ -736,6 +715,10 @@ class MainWindow(QMainWindow):
         self.export_worker.start()
 
     def _on_export_finished(self):
+        try:
+            self.export_worker.finished.disconnect(self._on_export_finished)
+        except Exception:
+            pass
         QMessageBox.information(self, '完成', '导出完成')
 
     # ---------------- overlay moved ----------------
@@ -756,21 +739,21 @@ class MainWindow(QMainWindow):
             pass
         super().closeEvent(ev)
 
-    def image_to_label(self, ix: int, iy: int) -> QPoint:
-        """把图像像素坐标映射到 preview_label(label) 的像素坐标（用于 overlay 绘制）"""
+    def image_to_label_percent(self, px: float, py: float) -> QPoint:
+        """将百分比坐标映射到label像素坐标"""
         if not self.current_pil:
             return QPoint(0, 0)
-        w, h = self.current_pil.size
         lw, lh = self.preview_label.width(), self.preview_label.height()
-        sx = lw / w if w else 1.0
-        sy = lh / h if h else 1.0
-        return QPoint(int(ix * sx * self.preview_scale), int(iy * sy * self.preview_scale))
+        x = int(px * lw)
+        y = int(py * lh)
+        return QPoint(x, y)
 
-    def label_to_image(self, pt: QPoint) -> tuple[int, int]:
-        """把 preview_label(label) 上的坐标映回到图像像素坐标（用于导出）"""
-        if not self.current_pil:
-            return (0, 0)
-        return int(pt.x() / self.preview_scale), int(pt.y() / self.preview_scale)
+    def label_to_percent(self, pt: QPoint) -> tuple[float, float]:
+        """将label上的像素坐标映射为百分比坐标"""
+        lw, lh = self.preview_label.width(), self.preview_label.height()
+        if lw == 0 or lh == 0:
+            return (0.0, 0.0)
+        return pt.x() / lw, pt.y() / lh
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
