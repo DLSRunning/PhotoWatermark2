@@ -8,11 +8,11 @@ SUPPORTED_IN = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
 def load_image(path: Path) -> Image.Image:
     return Image.open(path)
 
-def save_image(img: Image.Image, path: Path, fmt: Optional[str]=None, quality: int=95):
+def save_image(img: Image.Image, path: Path, fmt: Optional[str]=None, quality: int=100):
     fmt = fmt or (path.suffix.replace('.', '').upper())
     params = {}
     if fmt.lower() in ('jpg','jpeg'):
-        params['quality'] = int(max(1, min(100, quality)))
+        params['quality'] = quality
     # 转换为 RGB，因为 JPEG 不支持 alpha
         if img.mode in ('RGBA','LA'):
             bg = Image.new('RGB', img.size, (255,255,255))
@@ -24,12 +24,3 @@ def save_image(img: Image.Image, path: Path, fmt: Optional[str]=None, quality: i
         img_to_save = img
 
     img_to_save.save(path, **params)
-
-def resize_image(img: Image.Image, width: int=None, height: int=None, percent: float=None) -> Image.Image:
-    if percent is not None:
-        w = int(img.width * percent)
-        h = int(img.height * percent)
-    else:
-        w = width or img.width
-        h = height or img.height
-    return img.resize((w,h), Image.LANCZOS)

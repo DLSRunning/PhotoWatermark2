@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import templates as templates_mod
-from core.io_ops import load_image, save_image, resize_image, SUPPORTED_IN
+from core.io_ops import load_image, save_image, SUPPORTED_IN
 from core.watermark import apply_text_watermark
 
 
@@ -46,22 +46,27 @@ class ExportWorker(QThread):
                 img = load_image(src).convert('RGBA')
                 # 仅应用文本水印
                 if ctx.get('use_text_mark'):
-                    # Qt像素字号 -> PIL point字号
-                    qt_font_size = int(ctx.get('font_size', 36))
-                    dpi = img.info.get("dpi", (96, 96))[0]  # 默认 96
-                    pil_font_size = int(qt_font_size * 72 / dpi)  # 换算后和预览接近
+                    pil_font_size = int(ctx.get('font_size', 36))
+                    
+                    preview_scale = ctx.get('preview_scale', 0.25)
+                    pos_x, pos_y = ctx.get('text_pos', (0, 0))
+                    pos_x = int(pos_x / preview_scale)
+                    pos_y = int(pos_y / preview_scale)
 
-                    # 旋转方向修正：PIL逆时针，Qt顺时针
-                    pil_rotation = -float(ctx.get('text_rotation', 0.0))
+                    opacity = ctx.get('opacity', 60)
+                    if opacity > 1:
+                        opacity = opacity / 100.0
+
+                    pil_rotation = -float(ctx.get('text_rotation', 0.0)) 
+
                     img = apply_text_watermark(
                         img,
                         ctx.get('text', ''),
                         ctx.get('font_path'),
                         font_size=pil_font_size,
                         color=tuple(ctx.get('color', (255, 255, 255))),
-                        opacity=ctx.get('opacity', 0.5),
-                        position=tuple(ctx.get('text_pos', (0, 0))),
-                        anchor=ctx.get('anchor', 'lt'),
+                        opacity=opacity,
+                        position=(pos_x, pos_y),
                         rotation=pil_rotation,
                         stroke_width=ctx.get('stroke_width', 0),
                         stroke_fill=tuple(ctx.get('stroke_fill', (0, 0, 0)))
@@ -96,8 +101,6 @@ class DraggableOverlay(QLabel):
         self._dragging = False
         self._last_pos = QPoint(0, 0)
 
-        self._content_mode = 'text'  # 'text' or 'image'
-
         self._pixmap = None
         self._text = ''
         self._font = self.font()
@@ -118,28 +121,14 @@ class DraggableOverlay(QLabel):
     def set_text(self, text: str, font: QFont = None, color: QColor = None,
                  stroke_width: int = 0, stroke_color: QColor = None,
                  rotation: float = 0.0, opacity: float = 1.0, position: QPoint | None = None):
-        self._content_mode = 'text'
         self._text = text
-        if font:
-            self._font = font
-        if color:
-            self._color = color
-        if stroke_color:
-            self._stroke_color = stroke_color
+        self._font = font
+        self._color = color
+        self._stroke_color = stroke_color
         self._stroke_width = stroke_width
         self._rotation = rotation
         self._opacity = opacity
-        if position:
-            self._draw_pos = QPoint(position)
-        self.update()
-
-    def set_image(self, pixmap: QPixmap, opacity: float = 1.0, rotation: float = 0.0, position: QPoint | None = None):
-        self._content_mode = 'image'
-        self._pixmap = pixmap
-        self._opacity = opacity
-        self._rotation = rotation
-        if position:
-            self._draw_pos = QPoint(position)
+        self._draw_pos = QPoint(position)
         self.update()
 
     def paintEvent(self, ev):
@@ -150,24 +139,8 @@ class DraggableOverlay(QLabel):
         painter = QPainter(self)
         painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         painter.setOpacity(self._opacity)
-
-        if self._content_mode == 'image' and self._pixmap:
-            pix_w = self._pixmap.width()
-            pix_h = self._pixmap.height()
-            dx = self._draw_pos.x()
-            dy = self._draw_pos.y()
-
-            painter.save()
-            cx = dx + pix_w / 2
-            cy = dy + pix_h / 2
-            painter.translate(cx, cy)
-            painter.rotate(self._rotation)
-            painter.translate(-cx, -cy)
-            target = self._pixmap.rect()
-            target.moveTo(int(dx), int(dy))
-            painter.drawPixmap(target, self._pixmap)
-            painter.restore()
-        elif self._content_mode == 'text' and self._text:
+        
+        if self._text:
             painter.setFont(self._font)
             metrics = painter.fontMetrics()
             rect = metrics.boundingRect(self._text)
@@ -209,13 +182,6 @@ class DraggableOverlay(QLabel):
             self._last_pos = gp
 
             new = self._draw_pos + delta
-
-            # 限制到 overlay 边界内（根据当前内容大小）
-            max_x = max(0, self.width() - (self._pixmap.width() if self._pixmap else (self.fontMetrics().horizontalAdvance(self._text) or 1)))
-            max_y = max(0, self.height() - (self._pixmap.height() if self._pixmap else self.fontMetrics().height()))
-            new.setX(max(0, min(new.x(), max_x)))
-            new.setY(max(0, min(new.y(), max_y)))
-
             self._draw_pos = new
             self.moved.emit(self._draw_pos)
             self.update()
@@ -232,7 +198,6 @@ class DraggableOverlay(QLabel):
             ev.ignore()
 
     def resizeEvent(self, ev):
-        """父控件大小变化时更新 overlay 大小，并保持水印相对位置"""
         old_size = ev.oldSize()
         new_size = ev.size()
         if old_size.width() > 0 and old_size.height() > 0:
@@ -251,6 +216,7 @@ class MainWindow(QMainWindow):
     # 每张图片单独水印设置
     def __init__(self):
         super().__init__()
+        self.preview_scale = 0.25
         self.image_settings: Dict[Path, dict] = {}
         self.setWindowTitle('WatermarkApp')
         self.resize(1200, 800)
@@ -473,6 +439,13 @@ class MainWindow(QMainWindow):
         self.current_index = idx
         p = self.images[idx]
         self.current_pil = load_image(p)
+        if self.current_pil:
+            w, h = self.current_pil.size
+            # 预览按缩放因子
+            pw, ph = int(w * self.preview_scale), int(h * self.preview_scale)
+            self.preview_label.setMinimumSize(pw, ph)
+            self.preview_label.setMaximumSize(pw, ph)
+            self.preview_label.resize(pw, ph)
         # 加载该图片的设置
         settings = self.image_settings.get(p)
         if settings:
@@ -483,13 +456,10 @@ class MainWindow(QMainWindow):
     # ---------------- preview / overlay ----------------
     def show_preview(self, pil_img):
         qpix = pil_to_qpixmap(pil_img)
-        # 保持原始比例拉伸显示
-        label_size = self.preview_label.size()
-        img_size = qpix.size()
-        if img_size.width() > 0 and img_size.height() > 0:
-            scale = min(label_size.width() / img_size.width(), label_size.height() / img_size.height())
-            new_w = int(img_size.width() * scale)
-            new_h = int(img_size.height() * scale)
+
+        if qpix.width() > 0 and qpix.height() > 0:
+            new_w = int(qpix.width() * self.preview_scale)
+            new_h = int(qpix.height() * self.preview_scale)
             qpix = qpix.scaled(new_w, new_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.preview_label.setPixmap(qpix)
         self.preview_label.setScaledContents(False)
@@ -536,11 +506,10 @@ class MainWindow(QMainWindow):
 
     def _gather_current_settings(self) -> Dict[str, Any]:
         use_text = bool(self.text_input.text())
-        # 默认水印位置为右下角
         tex_pos = (0, 0)
         if self.current_pil:
             w, h = self.current_pil.size
-            tex_pos = (w - 20, h - 20)
+            tex_pos = (w, h)
 
         color = getattr(self, '_chosen_color', (255, 255, 255))
         # 如果 overlay 已经移动过，覆盖位置（始终保存为原始图片坐标）
@@ -565,16 +534,6 @@ class MainWindow(QMainWindow):
         }
         return ctx
 
-    def _build_scaled_logo_pil(self):
-        if not self.mark_logo_pil:
-            return None
-        scale = self.logo_scale.value() / 100.0
-        new_size = (max(1, int(self.mark_logo_pil.width * scale)), max(1, int(self.mark_logo_pil.height * scale)))
-        try:
-            return self.mark_logo_pil.resize(new_size, resample=PilImage.LANCZOS)
-        except Exception:
-            return self.mark_logo_pil.resize(new_size)
-
     def choose_color(self):
         col = QColorDialog.getColor()
         if col.isValid():
@@ -590,37 +549,31 @@ class MainWindow(QMainWindow):
         if not self.current_pil:
             return
         w, h = self.current_pil.size
-        # 目标参考点 (0..1)
-        cx = (coords[0] + 1) / 2
-        cy = (coords[1] + 1) / 2
-
         # 获取水印尺寸
-        if self.mark_logo_pil and self.overlay._content_mode == 'image':
-            scaled = self._build_scaled_logo_pil()
-            mw, mh = scaled.size
-        elif self.text_input.text():
+
+        if self.text_input.text():
             font = QFont(self.font_combo.currentFont())
             font.setPointSize(self.font_size.value())
             fm = QFontMetrics(font)
             rect = fm.boundingRect(self.text_input.text())
-            mw, mh = rect.width(), rect.height()
+            mw, mh = rect.width() / 0.25, rect.height() / 0.25
         else:
             mw, mh = 100, 30
 
-        # 根据 coords 决定对齐方式
-        if coords[0] == -1:  # 左
-            target_x = 0
-        elif coords[0] == 0:  # 中
-            target_x = (w - mw) // 2
-        else:  # 右
-            target_x = w - mw
-
-        if coords[1] == -1:  # 上
-            target_y = 0
-        elif coords[1] == 0:  # 中
-            target_y = (h - mh) // 2
-        else:  # 下
-            target_y = h - mh
+        # 九宫格视觉中心坐标
+        pos_map = {
+            'LT': (0, 0),
+            'CT': (w // 2 - mw // 2, 0),
+            'RT': (w - mw, 0),
+            'LC': (0, h // 2 - mh // 2),
+            'CC': (w // 2 - mw // 2, h // 2 - mh // 2),
+            'RC': (w - mw, h // 2 - mh // 2),
+            'LB': (0, h - mh),
+            'CB': (w // 2 - mw // 2, h - mh),
+            'RB': (w - mw, h - mh)
+        }
+        btn_name = btn.text()
+        target_x, target_y = pos_map.get(btn_name, (0, 0))
 
         # 映射到 label 坐标并设置 overlay
         label_pt = self.image_to_label(target_x, target_y)
@@ -811,17 +764,13 @@ class MainWindow(QMainWindow):
         lw, lh = self.preview_label.width(), self.preview_label.height()
         sx = lw / w if w else 1.0
         sy = lh / h if h else 1.0
-        return QPoint(int(ix * sx), int(iy * sy))
+        return QPoint(int(ix * sx * self.preview_scale), int(iy * sy * self.preview_scale))
 
     def label_to_image(self, pt: QPoint) -> tuple[int, int]:
         """把 preview_label(label) 上的坐标映回到图像像素坐标（用于导出）"""
         if not self.current_pil:
             return (0, 0)
-        w, h = self.current_pil.size
-        lw, lh = self.preview_label.width(), self.preview_label.height()
-        sx = w / lw if lw else 1.0
-        sy = h / lh if lh else 1.0
-        return int(pt.x() * sx), int(pt.y() * sy)
+        return int(pt.x() / self.preview_scale), int(pt.y() / self.preview_scale)
 
     def resizeEvent(self, ev):
         super().resizeEvent(ev)
