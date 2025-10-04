@@ -61,7 +61,6 @@ class ExportWorker(QThread):
                     img = apply_text_watermark(
                         img,
                         ctx.get('text', ''),
-                        ctx.get('font_path'),
                         font_size=pil_font_size,
                         color=tuple(ctx.get('color', (255, 255, 255))),
                         opacity=opacity,
@@ -133,16 +132,18 @@ class DraggableOverlay(QLabel):
         painter = QPainter(self)
         painter.setRenderHints(QPainter.Antialiasing | QPainter.SmoothPixmapTransform)
         painter.setOpacity(self._opacity)
-        
+
         if self._text:
             painter.setFont(self._font)
-            metrics = painter.fontMetrics()
-            rect = metrics.boundingRect(self._text)
-            dx = self._draw_pos.x()
-            dy = self._draw_pos.y()
+            fm = QFontMetrics(self._font)
+
+            # 我们把 self._draw_pos 视为 top-left（便于拖动与保存）
+            dx = float(self._draw_pos.x())
+            top_y = float(self._draw_pos.y())
+            baseline_y = top_y + fm.ascent()
 
             path = QPainterPath()
-            path.addText(QPointF(dx, dy + metrics.ascent()), self._font, self._text)
+            path.addText(QPointF(dx, baseline_y), self._font, self._text)
 
             if self._stroke_width > 0:
                 pen = QPen(self._stroke_color)
@@ -286,7 +287,6 @@ class MainWindow(QMainWindow):
         text_group = QGroupBox('文本水印')
         text_layout = QFormLayout()
         self.text_input = QLineEdit('')
-        self.font_combo = QFontComboBox()
         self.font_size = QSpinBox()
         self.font_size.setRange(6, 240)
         self.font_size.setValue(36)
@@ -298,7 +298,6 @@ class MainWindow(QMainWindow):
         self.stroke_spin.setRange(0, 10)
         self.stroke_spin.setValue(0)
         text_layout.addRow('文字', self.text_input)
-        text_layout.addRow('字体', self.font_combo)
         text_layout.addRow('字号', self.font_size)
         text_layout.addRow('颜色', self.color_btn)
         text_layout.addRow('不透明度', self.opacity_slider)
@@ -363,7 +362,6 @@ class MainWindow(QMainWindow):
 
         # text controls
         self.text_input.textChanged.connect(self.update_preview)
-        self.font_combo.currentFontChanged.connect(lambda _: self.update_preview())
         self.font_size.valueChanged.connect(lambda _: self.update_preview())
         self.color_btn.clicked.connect(self.choose_color)
         self.opacity_slider.valueChanged.connect(lambda _: self.update_preview())
@@ -461,7 +459,7 @@ class MainWindow(QMainWindow):
         label_pos = self.image_to_label_percent(*percent_pos)
 
         if ctx.get('use_text_mark') and ctx.get('text'):
-            font = QFont(self.font_combo.currentFont())
+            font = QFont()
             font.setPixelSize(self.font_size.value())
             color = QColor(*map(int, self._chosen_color))
             stroke_color = QColor(*map(int, ctx.get('stroke_fill', (0, 0, 0))))
@@ -491,7 +489,6 @@ class MainWindow(QMainWindow):
         ctx = {
             'use_text_mark': use_text,
             'text': self.text_input.text(),
-            'font_path': None,
             'font_size': self.font_size.value(),
             'color': color,
             'opacity': self.opacity_slider.value() / 100.0,
@@ -518,8 +515,9 @@ class MainWindow(QMainWindow):
         # 九宫格百分比坐标
         # 九宫格中心定位（以水印中心为锚点）
         # 计算水印在label上的宽高
-        font = QFont(self.font_combo.currentFont())
-        font.setPixelSize(self.font_size.value())
+        font = QFont()
+        scaled_font_px = max(1, int(self.font_size.value() * self.preview_scale))
+        font.setPixelSize(scaled_font_px)
         fm = QFontMetrics(font)
         text = self.text_input.text()
         if text:
@@ -532,14 +530,14 @@ class MainWindow(QMainWindow):
         # 百分比坐标为中心点
         pos_percent_map = {
             'LT': (0, 0),
-            'CT': (0.5 - wm_w/2/lw, 0),
-            'RT': (1.0-wm_w/lw, 0),
-            'LC': (0, 0.5 - wm_h/2/lh),
-            'CC': (0.5 - wm_w/2/lw, 0.5 - wm_h/2/lh),
-            'RC': (1.0-wm_w/lw, 0.5 - wm_h/2/lh),
-            'LB': (0, 1.0-wm_h/lh),
-            'CB': (0.5 - wm_w/2/lw, 1.0-wm_h/lh),
-            'RB': (1.0-wm_w/lw, 1.0-wm_h/lh)
+            'CT': (0.5 - 2 * wm_w/lw, 0),
+            'RT': (1.0 - 4 * wm_w/lw, 0),
+            'LC': (0, 0.5 - 2 * wm_h/lh),
+            'CC': (0.5 - 2 * wm_w/lw, 0.5 - 2 * wm_h/lh),
+            'RC': (1.0 - 4 * wm_w/lw, 0.5 - 2 * wm_h/lh),
+            'LB': (0, 1.0 - 4 * wm_h/lh),
+            'CB': (0.5 - 2 * wm_w/lw, 1.0 - 4 * wm_h/lh),
+            'RB': (1.0 - 4 * wm_w/lw, 1.0 - 4 * wm_h/lh)
         }
         btn_name = btn.text()
         px, py = pos_percent_map.get(btn_name, (0.5, 0.5))
@@ -698,9 +696,10 @@ class MainWindow(QMainWindow):
     # ---------------- overlay moved ----------------
     def on_overlay_moved(self, pos: QPoint):
         # 拖动水印时，更新当前图片的 text_pos_percent
+        print(f"水印当前位置 label 坐标: {pos.x()}, {pos.y()}")
+        px, py = self.label_to_percent(pos)
         if self.current_index is not None and self.current_index < len(self.images):
             cur_path = self.images[self.current_index]
-            px, py = self.label_to_percent(pos)
             if cur_path in self.image_settings:
                 self.image_settings[cur_path]['text_pos_percent'] = (px, py)
             else:

@@ -9,7 +9,6 @@ RGBAColor = Tuple[int,int,int,int]
 def apply_text_watermark(
     base_img: Image.Image,
     text: str,
-    font_path: Optional[str],
     font_size: int = 36,
     color: Tuple[int,int,int] = (255,255,255),
     opacity: float = 0.5,
@@ -27,12 +26,8 @@ def apply_text_watermark(
 
     # 尝试加载字体
     try:
-        pil_font_size = int(font_size * 72 / 96 * 4)
-
-        if font_path:
-            font = ImageFont.truetype(font_path, pil_font_size)
-        else:
-            font = ImageFont.truetype("arial.ttf", pil_font_size)
+        pil_font_size = int(font_size * 4)
+        font = ImageFont.truetype("arial.ttf", pil_font_size)
     except Exception:
         # 兜底：依然尝试默认字体，但字号不可控
         font = ImageFont.load_default()
@@ -44,7 +39,7 @@ def apply_text_watermark(
     print(f"Watermark text: '{text}' at {position} with font size {font_size}, color {fill}, opacity {opacity}")
 
     # 在独立层上绘制文字
-    draw.text(position, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
+    draw.text(position, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill, anchor="lt",)
 
 
 
