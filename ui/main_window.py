@@ -242,9 +242,12 @@ class MainWindow(QMainWindow):
         self.file_list.setMaximumWidth(280)
         self.file_list.setIconSize(QSize(96, 96))
         self.file_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.file_list.setAcceptDrops(True)
+        self.file_list.viewport().setAcceptDrops(True)
 
-        self.import_btn = QPushButton('导入图片/文件夹')
-        self.export_btn = QPushButton('导出/批量处理')
+        self.import_file_btn = QPushButton('导入图片文件')
+        self.import_folder_btn = QPushButton('导入图片文件夹')
+        self.export_btn = QPushButton('批量导出')
         self.progress = QProgressBar()
         self.progress.setValue(0)
 
@@ -262,7 +265,8 @@ class MainWindow(QMainWindow):
         tpl_group.setLayout(tpl_layout)
 
         left_layout.addWidget(self.file_list, 1)
-        left_layout.addWidget(self.import_btn)
+        left_layout.addWidget(self.import_file_btn)
+        left_layout.addWidget(self.import_folder_btn)
         left_layout.addWidget(self.export_btn)
         left_layout.addWidget(tpl_group, 1)
         left_layout.addWidget(self.progress)
@@ -362,7 +366,8 @@ class MainWindow(QMainWindow):
         self.file_list.addAction(clear_act)
 
     def _connect_signals(self):
-        self.import_btn.clicked.connect(self.import_images)
+        self.import_file_btn.clicked.connect(self.import_files)
+        self.import_folder_btn.clicked.connect(self.import_folder)
         self.export_btn.clicked.connect(self.export_all)
         self.file_list.itemSelectionChanged.connect(self.on_select_file)
 
@@ -386,28 +391,25 @@ class MainWindow(QMainWindow):
         self.overlay.moved.connect(self.on_overlay_moved)
 
     # ---------------- file operations ----------------
-    def import_images(self):
-        dlg = QFileDialog(self)
-        dlg.setFileMode(QFileDialog.ExistingFiles)
-        dlg.setNameFilters(['Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)'])
-        if dlg.exec():
-            files = [Path(p) for p in dlg.selectedFiles()]
-            for p in files:
-                if p.suffix.lower() in SUPPORTED_IN and p not in self.images:
-                    self.images.append(p)
-                    item = QListWidgetItem(p.name)
-                    # try to add thumbnail
-                    try:
-                        pil = load_image(p)
-                        qpix = pil_to_qpixmap(pil).scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                        item.setIcon(QIcon(qpix))
-                    except Exception:
-                        pass
-                    self.file_list.addItem(item)
-                        # 首次导入时载入“默认”模板
-                    default_tpl = self.templates.get('默认') if hasattr(self, 'templates') else None
-                    if default_tpl:
-                        self.image_settings[p] = default_tpl.copy()
+    def import_files(self):
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "选择图片文件",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
+        )
+        paths = [Path(f) for f in files if Path(f).suffix.lower() in SUPPORTED_IN]
+        if paths:
+            self._add_images(paths)
+
+    def import_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "选择文件夹")
+        if folder:
+            folder_path = Path(folder)
+            all_files = [f for f in folder_path.rglob("*") if f.suffix.lower() in SUPPORTED_IN]
+            if all_files:
+                self._add_images(all_files)
+
 
     def clear_list(self):
         self.file_list.clear()
@@ -752,6 +754,50 @@ class MainWindow(QMainWindow):
             self.overlay.setGeometry(0, 0, self.preview_label.width(), self.preview_label.height())
             self.update_preview()
 
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    p = Path(url.toLocalFile())
+                    if p.is_dir() or p.suffix.lower() in SUPPORTED_IN:
+                        event.acceptProposedAction()
+                        return
+        event.ignore()
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            files = []
+            for url in event.mimeData().urls():
+                if url.isLocalFile():
+                    p = Path(url.toLocalFile())
+                    if p.is_dir():
+                        # 文件夹 → 递归找图片
+                        for f in p.rglob("*"):
+                            if f.suffix.lower() in SUPPORTED_IN:
+                                files.append(f)
+                    elif p.suffix.lower() in SUPPORTED_IN:
+                        files.append(p)
+            if files:
+                self._add_images(files)
+                event.acceptProposedAction()
+
+    def _add_images(self, files: list[Path]):
+        for p in files:
+            if p not in self.images:
+                self.images.append(p)
+                item = QListWidgetItem(p.name)
+                try:
+                    pil = load_image(p)
+                    qpix = pil_to_qpixmap(pil).scaled(96, 96, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    item.setIcon(QIcon(qpix))
+                except Exception:
+                    pass
+                self.file_list.addItem(item)
+
+                # 默认模板
+                default_tpl = self.templates.get('默认') if hasattr(self, 'templates') else None
+                if default_tpl:
+                    self.image_settings[p] = default_tpl.copy()
 
 # If run as script for debugging
 if __name__ == '__main__':
