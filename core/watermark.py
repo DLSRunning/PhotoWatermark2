@@ -39,7 +39,7 @@ def apply_text_watermark(
     print(f"Watermark text: '{text}' at {position} with font size {font_size}, color {fill}, opacity {opacity}")
 
     # 在独立层上绘制文字
-    draw.text(position, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill, anchor="lt",)
+    draw.text(position, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
 
 
