@@ -80,8 +80,6 @@ class ExportWorker(QThread):
                 self.progress.emit(int(i / total * 100))
         except Exception as e:
             self.error.emit(str(e))
-        finally:
-            self.finished.emit()
 
     def cancel(self):
         self._is_cancelled = True
@@ -711,15 +709,13 @@ class MainWindow(QMainWindow):
         self.export_worker = ExportWorker(tasks)
         self.export_worker.progress.connect(lambda v: self.progress.setValue(v))
         self.export_worker.error.connect(lambda e: QMessageBox.critical(self, '导出错误', e))
-        self.export_worker.finished.connect(self._on_export_finished)
+        self.export_worker.finished.connect(self._on_export_finished, Qt.UniqueConnection)
         self.export_worker.start()
 
     def _on_export_finished(self):
-        try:
-            self.export_worker.finished.disconnect(self._on_export_finished)
-        except Exception:
-            pass
         QMessageBox.information(self, '完成', '导出完成')
+        self.export_worker.finished.disconnect(self._on_export_finished)
+
 
     # ---------------- overlay moved ----------------
     def on_overlay_moved(self, pos: QPoint):
