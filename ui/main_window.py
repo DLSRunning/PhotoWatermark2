@@ -44,7 +44,6 @@ class ExportWorker(QThread):
                 if self._is_cancelled:
                     break
                 img = load_image(src).convert('RGBA')
-                # 仅应用文本水印
                 if ctx.get('use_text_mark'):
                     pil_font_size = int(ctx.get('font_size', 36))
                     
@@ -71,7 +70,13 @@ class ExportWorker(QThread):
 
                 # 直接保存原始尺寸和默认质量
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                save_image(img, dst)
+                
+                export_format = ctx.get('export_format', 'PNG')
+                if export_format == "JPEG":
+                    img = img.convert("RGB")
+                    save_image(img, dst, format="JPEG", quality=95)
+                else:
+                    save_image(img, dst, format="PNG")
 
                 self.progress.emit(int(i / total * 100))
         except Exception as e:
@@ -82,7 +87,7 @@ class ExportWorker(QThread):
 
 
 class DraggableOverlay(QLabel):
-    """可在预览上拖动的水印显示层：既可以显示文本，也可以显示图片（PIL -> QPixmap）"""
+    """可在预览上拖动的水印显示层"""
 
     moved = Signal(QPoint)
 
@@ -137,7 +142,6 @@ class DraggableOverlay(QLabel):
             painter.setFont(self._font)
             fm = QFontMetrics(self._font)
 
-            # 我们把 self._draw_pos 视为 top-left（便于拖动与保存）
             dx = float(self._draw_pos.x())
             top_y = float(self._draw_pos.y())
             baseline_y = top_y + fm.ascent()
@@ -210,10 +214,10 @@ class MainWindow(QMainWindow):
 
         self.images: list[Path] = []
         self.current_index: Optional[int] = None
-        self.current_pil = None  # PIL Image for currently selected
+        self.current_pil = None 
 
         self._chosen_color = (255, 255, 255)
-        self.mark_logo_pil = None  # 初始化 logo 水印为 None
+        self.mark_logo_pil = None  
 
         self._init_ui()
         self._connect_signals()
@@ -231,7 +235,6 @@ class MainWindow(QMainWindow):
         self.export_worker: Optional[ExportWorker] = None
 
     def _init_ui(self):
-        # Left: file list + import/export + 模板 + progress
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
 
@@ -245,7 +248,7 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setValue(0)
 
-        # --- Templates (放到左侧更直观) ---
+        # --- Templates---
         tpl_group = QGroupBox('模板')
         tpl_layout = QVBoxLayout()
         self.tpl_list = QListWidget()
@@ -325,6 +328,9 @@ class MainWindow(QMainWindow):
         self.prefix_input = QLineEdit('wm_')
         self.suffix_input = QLineEdit('_watermarked')
         self.allow_export_to_src = QCheckBox('允许导出到源文件夹（默认禁止）')
+        self.format_combo = QComboBox()
+        self.format_combo.addItems(['PNG', 'JPEG'])
+        export_layout.addRow('图片格式', self.format_combo)
         export_layout.addRow('命名规则', self.naming_combo)
         export_layout.addRow('前缀', self.prefix_input)
         export_layout.addRow('后缀', self.suffix_input)
@@ -398,6 +404,10 @@ class MainWindow(QMainWindow):
                     except Exception:
                         pass
                     self.file_list.addItem(item)
+                        # 首次导入时载入“默认”模板
+                    default_tpl = self.templates.get('默认') if hasattr(self, 'templates') else None
+                    if default_tpl:
+                        self.image_settings[p] = default_tpl.copy()
 
     def clear_list(self):
         self.file_list.clear()
@@ -513,8 +523,6 @@ class MainWindow(QMainWindow):
         if not self.current_pil:
             return
         # 九宫格百分比坐标
-        # 九宫格中心定位（以水印中心为锚点）
-        # 计算水印在label上的宽高
         font = QFont()
         scaled_font_px = max(1, int(self.font_size.value() * self.preview_scale))
         font.setPixelSize(scaled_font_px)
@@ -666,20 +674,23 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, '错误', '输出文件夹不能是源图片所在的文件夹（可在导出选项允许）')
                     return
         # build tasks，每张图片用独立设置
+        export_format = self.format_combo.currentText().upper()
+        ext = ".png" if export_format == "PNG" else ".jpg"
         tasks = []
         for idx, p in enumerate(self.images):
             # compute name
             if self.naming_combo.currentText() == '保留原名':
-                name = p.name
+                name = p.stem + ext
             elif self.naming_combo.currentText() == '添加前缀':
-                name = self.prefix_input.text() + p.name
+                name = self.prefix_input.text() + p.stem + ext
             else:
-                name = p.stem + self.suffix_input.text() + p.suffix
+                name = p.stem + self.suffix_input.text() + ext
             dst = out_dir / name
             ctx = self.image_settings.get(p)
             if not ctx:
                 # fallback: 当前设置
                 ctx = self._gather_current_settings()
+            ctx['export_format'] = export_format
             tasks.append((p, dst, ctx.copy()))
         # start worker
         self.export_worker = ExportWorker(tasks)
