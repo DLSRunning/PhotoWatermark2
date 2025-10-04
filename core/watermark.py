@@ -1,8 +1,6 @@
 # watermark.py
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
-from io import BytesIO
-from typing import Tuple, Optional
-import math
+from typing import Tuple
 
 RGBAColor = Tuple[int,int,int,int]
 

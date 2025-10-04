@@ -1,18 +1,17 @@
 from __future__ import annotations
-
+import sys
 import io
 import json
 from pathlib import Path
 from typing import Optional, Tuple, Dict, Any
 
-from PIL import Image as PilImage
 from PySide6.QtCore import Qt, QSize, QPoint, Signal, QThread, QPointF
 from PySide6.QtGui import QPixmap, QImage, QIcon, QAction, QPainter, QFont, QPen, QColor, QPainterPath, QBrush, QFontMetrics
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QFileDialog, QListWidget, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QLineEdit, QSpinBox, QSlider, QComboBox,
     QMessageBox, QColorDialog, QListWidgetItem, QProgressBar,
-    QCheckBox, QGroupBox, QGridLayout, QFontComboBox, QFormLayout, QAbstractItemView
+    QCheckBox, QGroupBox, QGridLayout, QFormLayout, QAbstractItemView
 )
 
 from core import templates as templates_mod
@@ -25,6 +24,16 @@ def pil_to_qpixmap(pil_img) -> QPixmap:
     pil_img.convert('RGBA').save(buf, format='PNG')
     qimg = QImage.fromData(buf.getvalue(), 'PNG')
     return QPixmap.fromImage(qimg)
+
+def resource_path(relative_path: str) -> Path:
+    """获取资源文件路径，支持 exe 打包"""
+    try:
+        # PyInstaller 打包后的临时目录
+        base_path = Path(sys._MEIPASS)
+    except AttributeError:
+        # 脚本运行
+        base_path = Path(__file__).parent.parent
+    return base_path / relative_path
 
 
 class ExportWorker(QThread):
@@ -222,15 +231,12 @@ class MainWindow(QMainWindow):
         self._init_ui()
         self._connect_signals()
 
-        # load templates from resource/default_templates.json
-        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
-        try:
-            if resource_path.exists():
-                self.templates = json.loads(resource_path.read_text(encoding='utf-8'))
-            else:
-                self.templates = {}
-        except Exception:
+        json_path = resource_path("resource/default_templates.json")
+        if json_path.exists():
+            self.templates = json.loads(json_path.read_text(encoding='utf-8'))
+        else:
             self.templates = {}
+
         self._load_template_names()
         self.export_worker: Optional[ExportWorker] = None
 
@@ -567,8 +573,7 @@ class MainWindow(QMainWindow):
             self.tpl_list.addItem(k)
 
     def save_template(self):
-        # 直接保存到 resource/default_templates.json
-        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
+        resource_file = resource_path("resource/default_templates.json")
         # 获取当前模板名
         from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, '模板名称', '请输入模板名称:')
@@ -592,11 +597,11 @@ class MainWindow(QMainWindow):
             ctx['text_pos_percent'] = (x / w if w else 0, y / h if h else 0)
             ctx.pop('text_pos', None)
         templates[name] = ctx
-        resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
+        resource_file.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
         # 刷新左侧模板列表
         self.templates = templates
         self._load_template_names()
-        QMessageBox.information(self, '保存', f'已保存模板到 {resource_path}')
+        QMessageBox.information(self, '保存', f'已保存模板到 {resource_file}')
 
     def load_selected_template(self):
         it = self.tpl_list.currentItem()
@@ -604,14 +609,12 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '错误', '请先选择模板')
             return
         name = it.text()
-        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
-        try:
-            if resource_path.exists():
-                templates = json.loads(resource_path.read_text(encoding='utf-8'))
-            else:
-                templates = {}
-        except Exception:
+        resource_file = resource_path("resource/default_templates.json")
+        if resource_file.exists():
+            templates = json.loads(resource_file.read_text(encoding='utf-8'))
+        else:
             templates = {}
+
         data = templates.get(name)
         if not data:
             QMessageBox.warning(self, '错误', '模板数据不存在')
@@ -624,17 +627,14 @@ class MainWindow(QMainWindow):
         if not it:
             return
         name = it.text()
-        resource_path = Path(__file__).parent.parent / 'resource' / 'default_templates.json'
-        try:
-            if resource_path.exists():
-                templates = json.loads(resource_path.read_text(encoding='utf-8'))
-            else:
-                templates = {}
-        except Exception:
+        resource_file = resource_path("resource/default_templates.json")
+        if resource_file.exists():
+            templates = json.loads(resource_file.read_text(encoding='utf-8'))
+        else:
             templates = {}
         if name in templates:
             del templates[name]
-            resource_path.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
+            resource_file.write_text(json.dumps(templates, ensure_ascii=False, indent=2), encoding='utf-8')
             self.templates = templates
             self._load_template_names()
             QMessageBox.information(self, '删除', f'已删除模板 {name}')
@@ -801,7 +801,6 @@ class MainWindow(QMainWindow):
 
 # If run as script for debugging
 if __name__ == '__main__':
-    import sys
     from PySide6.QtWidgets import QApplication
     app = QApplication(sys.argv)
     w = MainWindow()

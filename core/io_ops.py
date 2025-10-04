@@ -1,7 +1,7 @@
 # io_ops.py
 from PIL import Image
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Optional
 
 SUPPORTED_IN = ('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff')
 
