@@ -58,8 +58,6 @@ class ExportWorker(QThread):
                     if opacity > 1:
                         opacity = opacity / 100.0
 
-                    pil_rotation = -float(ctx.get('text_rotation', 0.0)) 
-
                     img = apply_text_watermark(
                         img,
                         ctx.get('text', ''),
@@ -68,7 +66,6 @@ class ExportWorker(QThread):
                         color=tuple(ctx.get('color', (255, 255, 255))),
                         opacity=opacity,
                         position=(pos_x, pos_y),
-                        rotation=pil_rotation,
                         stroke_width=ctx.get('stroke_width', 0),
                         stroke_fill=tuple(ctx.get('stroke_fill', (0, 0, 0)))
                     )
@@ -107,7 +104,6 @@ class DraggableOverlay(QLabel):
         self._opacity = 1.0
         self._stroke_width = 0
         self._stroke_color = QColor(0, 0, 0)
-        self._rotation = 0.0
 
         self._draw_pos = QPoint(0, 0)
 
@@ -119,13 +115,12 @@ class DraggableOverlay(QLabel):
 
     def set_text(self, text: str, font: QFont = None, color: QColor = None,
                  stroke_width: int = 0, stroke_color: QColor = None,
-                 rotation: float = 0.0, opacity: float = 1.0, position: QPoint | None = None):
+                 opacity: float = 1.0, position: QPoint | None = None):
         self._text = text
         self._font = font
         self._color = color
         self._stroke_color = stroke_color
         self._stroke_width = stroke_width
-        self._rotation = rotation
         self._opacity = opacity
         self._draw_pos = QPoint(position)
         self.update()
@@ -146,13 +141,6 @@ class DraggableOverlay(QLabel):
             dx = self._draw_pos.x()
             dy = self._draw_pos.y()
 
-            painter.save()
-            cx = dx + rect.width() / 2
-            cy = dy + rect.height() / 2
-            painter.translate(cx, cy)
-            painter.rotate(self._rotation)
-            painter.translate(-cx, -cy)
-
             path = QPainterPath()
             path.addText(QPointF(dx, dy + metrics.ascent()), self._font, self._text)
 
@@ -163,7 +151,6 @@ class DraggableOverlay(QLabel):
                 painter.strokePath(path, pen)
 
             painter.fillPath(path, QBrush(self._color))
-            painter.restore()
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:
@@ -310,16 +297,12 @@ class MainWindow(QMainWindow):
         self.stroke_spin = QSpinBox()
         self.stroke_spin.setRange(0, 10)
         self.stroke_spin.setValue(0)
-        self.rotation_text = QSpinBox()
-        self.rotation_text.setRange(0, 360)
-        self.rotation_text.setValue(0)
         text_layout.addRow('文字', self.text_input)
         text_layout.addRow('字体', self.font_combo)
         text_layout.addRow('字号', self.font_size)
         text_layout.addRow('颜色', self.color_btn)
         text_layout.addRow('不透明度', self.opacity_slider)
         text_layout.addRow('描边宽度', self.stroke_spin)
-        text_layout.addRow('旋转(°)', self.rotation_text)
         text_group.setLayout(text_layout)
 
         # --- Position presets ---
@@ -385,7 +368,6 @@ class MainWindow(QMainWindow):
         self.color_btn.clicked.connect(self.choose_color)
         self.opacity_slider.valueChanged.connect(lambda _: self.update_preview())
         self.stroke_spin.valueChanged.connect(lambda _: self.update_preview())
-        self.rotation_text.valueChanged.connect(lambda _: self.update_preview())
 
         # pos presets
         for btn in self.pos_buttons.values():
@@ -489,7 +471,6 @@ class MainWindow(QMainWindow):
                 color=color,
                 stroke_width=ctx['stroke_width'],
                 stroke_color=stroke_color,
-                rotation=ctx['text_rotation'],
                 opacity=ctx['opacity'],
                 position=label_pos
             )
@@ -517,8 +498,7 @@ class MainWindow(QMainWindow):
             'stroke_width': self.stroke_spin.value(),
             'stroke_fill': (0, 0, 0),
             'text_pos_percent': percent_pos,
-            'anchor': 'rd',
-            'text_rotation': float(self.rotation_text.value())
+            'anchor': 'rd'
         }
         return ctx
 
@@ -666,8 +646,6 @@ class MainWindow(QMainWindow):
                 self.stroke_spin.setValue(int(d.get('stroke_width', 0)))
             if 'stroke_fill' in d:
                 stroke_col = d.get('stroke_fill', (0, 0, 0))
-            if 'text_rotation' in d:
-                self.rotation_text.setValue(int(float(d.get('text_rotation', 0))))
             if 'text_pos_percent' in d:
                 px, py = d['text_pos_percent']
                 label_pt = self.image_to_label_percent(px, py)
@@ -719,9 +697,16 @@ class MainWindow(QMainWindow):
 
     # ---------------- overlay moved ----------------
     def on_overlay_moved(self, pos: QPoint):
-        # when user drags overlay we could map its pos back to text/logo positions
-        # This is a placeholder hook to map overlay position to watermark pixel coordinates if needed.
-        pass
+        # 拖动水印时，更新当前图片的 text_pos_percent
+        if self.current_index is not None and self.current_index < len(self.images):
+            cur_path = self.images[self.current_index]
+            px, py = self.label_to_percent(pos)
+            if cur_path in self.image_settings:
+                self.image_settings[cur_path]['text_pos_percent'] = (px, py)
+            else:
+                ctx = self._gather_current_settings()
+                ctx['text_pos_percent'] = (px, py)
+                self.image_settings[cur_path] = ctx
 
     # ---------------- close ----------------
     def closeEvent(self, ev):

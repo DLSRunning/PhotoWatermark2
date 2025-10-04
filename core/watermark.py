@@ -14,7 +14,6 @@ def apply_text_watermark(
     color: Tuple[int,int,int] = (255,255,255),
     opacity: float = 0.5,
     position: Tuple[int,int] = (0,0),
-    rotation: float = 0.0,
     stroke_width: int = 0,
     stroke_fill: Tuple[int,int,int]=(0,0,0),
 ) -> Image.Image:
@@ -42,13 +41,11 @@ def apply_text_watermark(
     alpha = int(255 * max(0.0, min(1.0, opacity)))
     fill = (color[0], color[1], color[2], alpha)
 
-    print(f"Watermark text: '{text}' at {position} with font size {font_size}, color {fill}, opacity {opacity}, rotation {rotation}")
+    print(f"Watermark text: '{text}' at {position} with font size {font_size}, color {fill}, opacity {opacity}")
 
     # 在独立层上绘制文字
     draw.text(position, text, font=font, fill=fill, stroke_width=stroke_width, stroke_fill=stroke_fill)
 
-    if rotation and rotation % 360 != 0:
-        txt_layer = txt_layer.rotate(rotation, resample=Image.BICUBIC, expand=False)
 
 
     out = Image.alpha_composite(img, txt_layer)
