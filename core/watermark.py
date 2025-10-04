@@ -24,7 +24,7 @@ def apply_text_watermark(
     # 尝试加载字体
     try:
         pil_font_size = int(font_size * 4)
-        font = ImageFont.truetype("arial.ttf", pil_font_size)
+        font = ImageFont.truetype("msyh.ttc", pil_font_size)
     except Exception:
         font = ImageFont.load_default()
 

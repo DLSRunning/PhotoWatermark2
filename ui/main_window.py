@@ -74,9 +74,9 @@ class ExportWorker(QThread):
                 export_format = ctx.get('export_format', 'PNG')
                 if export_format == "JPEG":
                     img = img.convert("RGB")
-                    save_image(img, dst, format="JPEG", quality=95)
+                    save_image(img, dst, fmt="JPEG", quality=95)
                 else:
-                    save_image(img, dst, format="PNG")
+                    save_image(img, dst, fmt="PNG")
 
                 self.progress.emit(int(i / total * 100))
         except Exception as e:
